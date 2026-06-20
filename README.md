@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🛡️ AetherAV
+<img src="assets/branding/logo.png" alt="AetherAV" width="140">
+
+<img src="assets/branding/wordmark.png" alt="AetherAV" width="300">
 
 ### A modern, open-source antivirus **engine** in Rust - local-first, privacy-first, and built for the 2026 threat landscape.
 
