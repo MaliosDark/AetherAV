@@ -366,3 +366,11 @@ svg{display:block}
 
 @media(max-width:880px){.live-grid{grid-template-columns:1fr}.news-grid{grid-template-columns:1fr}
   .feed-row{grid-template-columns:22px 100px 80px 1fr;}.fr-time{display:none}}
+
+/* ---- Community pulse panel (live view) ---- */
+.comm{display:flex;flex-direction:column;gap:12px}
+.comm-row{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--muted)}
+.comm-row b{color:var(--txt);font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;
+  background:linear-gradient(90deg,var(--cyan),var(--green));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.comm-foot{margin-top:15px;padding-top:13px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px;
+  font-size:13px;color:var(--green);font-weight:600}
