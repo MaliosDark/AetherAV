@@ -3,6 +3,11 @@ import shot from './app-screenshot.jpg'
 import logo from './aetherav.png'
 import wordmark from './aethertext.png'
 
+/* Canonical project links. */
+const REPO = 'https://github.com/MaliosDark/AetherAV'
+const RELEASES = REPO + '/releases/latest'
+const DOC = p => `${REPO}/blob/main/${p}`
+
 /* ---- tiny inline icon set (feather-style) ---- */
 const P = {
   shield: 'M12 3 20 6v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z',
@@ -159,10 +164,10 @@ function Nav() {
         <div className="nav-links">
           <a href="#features">Features</a>
           <a href="#engines">Engines</a>
-          <a href="#compare">Compare</a>
+          <a href="#live">Live</a>
           <a href="#ai">Aegis AI</a>
-          <a className="btn btn-ghost" href="#"><Icon d="github" s={16} /> GitHub</a>
-          <a className="btn btn-primary" href="#">Download</a>
+          <a className="btn btn-ghost" href={REPO} target="_blank" rel="noopener"><Icon d="github" s={16} /> GitHub</a>
+          <a className="btn btn-primary" href={RELEASES} target="_blank" rel="noopener">Download</a>
         </div>
       </div>
     </nav>
@@ -183,7 +188,7 @@ function Hero() {
           </p>
           <div className="hero-cta">
             <a className="btn btn-primary lg" href="#download">Download free</a>
-            <a className="btn btn-ghost lg" href="#"><Icon d="github" s={18} /> View source</a>
+            <a className="btn btn-ghost lg" href={REPO} target="_blank" rel="noopener"><Icon d="github" s={18} /> View source</a>
           </div>
           <div className="chips">
             <span><Icon d="check" s={14} /> Free forever</span>
@@ -204,9 +209,26 @@ function Hero() {
 }
 
 function Stats() {
+  // Live from the production API (JWT-authed). Falls back to STATS when offline.
+  const [s, setS] = useState(null)
+  useEffect(() => {
+    let on = true
+    const load = async () => { const d = await jget('/api/stats'); if (on && d) setS(d) }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { on = false; clearInterval(t) }
+  }, [])
+  const rows = s
+    ? [
+        [fmt(s.hashes) + '+', 'Malware signatures'],
+        [fmt(s.iocs) + '+', 'Threat-intel IOCs'],
+        [String(s.yara_rules), 'YARA rules'],
+        [s.model && s.model.present ? '50M' : '—', 'On-device AI model'],
+      ]
+    : STATS
   return (
     <section className="stats wrap">
-      {STATS.map(([v, l]) => (
+      {rows.map(([v, l]) => (
         <div className="stat" key={l}><div className="sv">{v}</div><div className="sl">{l}</div></div>
       ))}
     </section>
@@ -378,7 +400,7 @@ function Downloads() {
           <div className="dl-card" key={os}>
             <div className="dl-os">{os}{full && <span className="dl-tag">Full</span>}</div>
             <div className="dl-note">{note}</div>
-            <a className="btn btn-primary" href="#"><Icon d="download" s={16} /> Download</a>
+            <a className="btn btn-primary" href={RELEASES} target="_blank" rel="noopener"><Icon d="download" s={16} /> Download</a>
             <div className="dl-file">{file}</div>
           </div>
         ))}
@@ -416,8 +438,8 @@ function CTA() {
         <h2>Protection you can read, build, and verify.</h2>
         <p>Free and open source. Download it, or compile it yourself - bit-for-bit reproducible.</p>
         <div className="hero-cta">
-          <a className="btn btn-primary lg" href="#">Download free</a>
-          <a className="btn btn-ghost lg" href="#"><Icon d="github" s={18} /> Star on GitHub</a>
+          <a className="btn btn-primary lg" href={RELEASES} target="_blank" rel="noopener">Download free</a>
+          <a className="btn btn-ghost lg" href={REPO} target="_blank" rel="noopener"><Icon d="github" s={18} /> Star on GitHub</a>
         </div>
       </div>
     </section>
@@ -425,9 +447,9 @@ function CTA() {
 }
 
 const FOOT = [
-  ['Product', [['Features', '#features'], ['Engines', '#engines'], ['Aegis AI', '#ai'], ['Compare', '#compare'], ['Download', '#download']]],
-  ['Project', [['GitHub', '#'], ['Roadmap', '#'], ['Changelog', '#'], ['License', '#']]],
-  ['Security', [['Security policy', '#'], ['Verify releases', '#'], ['Report a vulnerability', '#'], ['FAQ', '#faq']]],
+  ['Product', [['Features', '#features'], ['Engines', '#engines'], ['Live threat feed', '#live'], ['Aegis AI', '#ai'], ['Download', RELEASES]]],
+  ['Project', [['GitHub', REPO], ['Roadmap', DOC('docs/ROADMAP.md')], ['Changelog', DOC('CHANGELOG.md')], ['License', DOC('LICENSE')], ['Contributing', DOC('CONTRIBUTING.md')]]],
+  ['Security', [['Security policy', DOC('SECURITY.md')], ['Verify releases', DOC('docs/VERIFY.md')], ['Report a vulnerability', REPO + '/security/advisories/new'], ['Certification', DOC('docs/CERTIFICATION.md')]]],
 ]
 
 function Footer() {
@@ -442,7 +464,10 @@ function Footer() {
         {FOOT.map(([h, links]) => (
           <div className="foot-col" key={h}>
             <div className="foot-h">{h}</div>
-            {links.map(([t, href]) => <a key={t} href={href}>{t}</a>)}
+            {links.map(([t, href]) => {
+              const ext = href.startsWith('http')
+              return <a key={t} href={href} {...(ext ? { target: '_blank', rel: 'noopener' } : {})}>{t}</a>
+            })}
           </div>
         ))}
       </div>
@@ -493,7 +518,7 @@ function AiPage() {
               running entirely on your CPU, fully offline.
             </p>
             <div className="hero-cta">
-              <a className="btn btn-primary lg" href="#">Download free</a>
+              <a className="btn btn-primary lg" href={RELEASES} target="_blank" rel="noopener">Download free</a>
               <a className="btn btn-ghost lg" href="#top">Back to overview</a>
             </div>
           </div>
@@ -564,7 +589,12 @@ function AiPage() {
 /* ---------- router ---------- */
 
 function useRoute() {
-  const read = () => (typeof window !== 'undefined' && window.location.hash === '#ai' ? 'ai' : 'home')
+  const read = () => {
+    const h = typeof window !== 'undefined' ? window.location.hash : ''
+    if (h === '#ai') return 'ai'
+    if (h === '#live') return 'live'
+    return 'home'
+  }
   const [route, setRoute] = useState(read())
   useEffect(() => {
     const onHash = () => { setRoute(read()); window.scrollTo(0, 0) }
@@ -593,12 +623,203 @@ function Home() {
   )
 }
 
+/* ============================ LIVE THREAT DASHBOARD ============================ */
+/* Production backend (external nginx -> this PC's aether-site). Override at build:
+   VITE_API_BASE=https://aether-central.aswss.com npm run build               */
+const API = import.meta.env.VITE_API_BASE || 'https://aether-central.aswss.com'
+// Optional shared client key (set VITE_CLIENT_KEY at build to match the server's
+// AETHER_CLIENT_KEY) - an extra gate on top of the origin allowlist + JWT.
+const CLIENT_KEY = import.meta.env.VITE_CLIENT_KEY || ''
+
+// Short-lived JWT obtained from /api/auth (origin-gated, rate-limited). The
+// browser sends the Origin header automatically, which the server enforces.
+let _token = null, _exp = 0
+async function authToken() {
+  if (_token && Date.now() / 1000 < _exp - 30) return _token
+  try {
+    const r = await fetch(API + '/api/auth', { headers: CLIENT_KEY ? { 'X-Aether-Key': CLIENT_KEY } : {} })
+    if (!r.ok) return null
+    const j = await r.json()
+    _token = j.token; _exp = j.exp
+    return _token
+  } catch (_) { return null }
+}
+
+async function jget(path) {
+  try {
+    let t = await authToken()
+    const call = tk => fetch(API + path, { cache: 'no-store', headers: tk ? { Authorization: 'Bearer ' + tk } : {} })
+    let r = await call(t)
+    if (r.status === 401) { _token = null; t = await authToken(); r = await call(t) } // token expired -> refresh once
+    if (!r.ok) return null
+    return await r.json()
+  } catch (_) { return null }
+}
+
+function useCountUp(target) {
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    if (!target) { setN(0); return }
+    let raf
+    const t0 = performance.now(), dur = 900
+    const tick = t => {
+      const k = Math.min(1, (t - t0) / dur)
+      setN(Math.round(target * (1 - Math.pow(1 - k, 3))))
+      if (k < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [target])
+  return n
+}
+
+const fmt = n => (n || 0).toLocaleString()
+function ago(ts) {
+  if (!ts) return ''
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts)
+  if (s < 60) return s + 's ago'
+  if (s < 3600) return Math.floor(s / 60) + 'm ago'
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago'
+  return Math.floor(s / 86400) + 'd ago'
+}
+
+function Counter({ value, label }) {
+  const n = useCountUp(value)
+  return <div className="stat"><div className="sv">{fmt(n)}</div><div className="sl">{label}</div></div>
+}
+
+function LivePage() {
+  const [stats, setStats] = useState(null)
+  const [live, setLive] = useState(null)
+  const [threats, setThreats] = useState(null)
+  const [news, setNews] = useState(null)
+  const [sys, setSys] = useState(null)
+  const [online, setOnline] = useState(true)
+
+  useEffect(() => {
+    let on = true
+    const fast = async () => {
+      const [l, y] = await Promise.all([jget('/api/live'), jget('/api/system')])
+      if (!on) return
+      setOnline(!!(l || y))
+      if (l) setLive(l)
+      if (y) setSys(y)
+    }
+    const slow = async () => {
+      const [s, t, n] = await Promise.all([jget('/api/stats'), jget('/api/threats'), jget('/api/news')])
+      if (!on) return
+      if (s) setStats(s)
+      if (t) setThreats(t)
+      if (n) setNews(n)
+    }
+    fast(); slow()
+    const a = setInterval(fast, 5000), b = setInterval(slow, 60000)
+    return () => { on = false; clearInterval(a); clearInterval(b) }
+  }, [])
+
+  const items = (live && live.items) || []
+  const fams = (threats && threats.families) || []
+  const famMax = fams.reduce((m, f) => Math.max(m, f.count), 1)
+  const cpu = sys ? Math.round(sys.cpu_pct || 0) : 0
+  const mem = sys && sys.mem_total ? Math.round((sys.mem_used / sys.mem_total) * 100) : 0
+
+  return (
+    <main className="live-page">
+      <section className="section wrap" style={{ paddingBottom: 0 }}>
+        <div className="live-head">
+          <span className={'live-badge' + (online ? '' : ' off')}>
+            <span className="live-dot" />{online ? 'LIVE' : 'CONNECTING…'}
+          </span>
+          <h2 style={{ margin: '12px 0 4px' }}>AetherAV Threat Intelligence</h2>
+          <p className="section-sub" style={{ margin: 0 }}>
+            Real-time analysis from the community pipeline - anonymous submissions, scanned by all
+            ten engines, with live verdicts.{online ? '' : ' Waiting for ' + API.replace(/^https?:\/\//, '') + '…'}
+          </p>
+        </div>
+
+        <div className="stats" style={{ marginTop: 22 }}>
+          <Counter value={stats ? stats.hashes : 0} label="Malware Hashes" />
+          <Counter value={stats ? stats.iocs : 0} label="Threat-Intel IOCs" />
+          <Counter value={stats ? stats.yara_rules : 0} label="YARA Rules" />
+          <Counter value={stats ? stats.patterns : 0} label="Pattern Signatures" />
+          <Counter value={live ? live.total_submissions : 0} label="Community Submissions" />
+          <Counter value={live ? live.flagged : 0} label="Flagged (window)" />
+        </div>
+      </section>
+
+      <section className="section wrap live-grid">
+        <div className="panel-card">
+          <div className="pc-head"><span className="live-dot sm" /> LIVE ANALYSIS FEED</div>
+          <div className="feed">
+            {items.length === 0 && <div className="feed-empty">Waiting for live submissions…</div>}
+            {items.map((it, i) => (
+              <div className={'feed-row ' + (it.verdict === 'malicious' ? 'mal' : 'pend')} key={(it.sha256 || '') + i}>
+                <span className="fr-ic"><Icon d={it.verdict === 'malicious' ? 'search' : 'refresh'} s={15} /></span>
+                <code className="fr-hash">{(it.short || (it.sha256 || '').slice(0, 12))}…</code>
+                <span className={'fr-tag ' + (it.verdict === 'malicious' ? 't-mal' : 't-pend')}>
+                  {it.verdict === 'malicious' ? 'Malicious' : 'Pending'}
+                </span>
+                <span className="fr-threat">{it.threat}</span>
+                <span className="fr-time">{ago(it.ts)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="live-col">
+          <div className="panel-card">
+            <div className="pc-head">TOP MALWARE FAMILIES</div>
+            <div className="bars">
+              {fams.length === 0 && <div className="feed-empty">No flagged families yet.</div>}
+              {fams.map(f => (
+                <div className="bar-row" key={f.name}>
+                  <span className="bar-name">{f.name}</span>
+                  <span className="bar-track"><span className="bar-fill" style={{ width: (f.count / famMax * 100) + '%' }} /></span>
+                  <span className="bar-n">{f.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="panel-card">
+            <div className="pc-head">ANALYSIS NODE</div>
+            <div className="gauge"><div className="g-top"><span>CPU</span><b>{cpu}%</b></div>
+              <div className="g-bar"><span style={{ width: cpu + '%' }} /></div></div>
+            <div className="gauge"><div className="g-top"><span>Memory</span><b>{mem}%</b></div>
+              <div className="g-bar"><span style={{ width: mem + '%' }} /></div></div>
+            <div className="node-meta">{sys ? (sys.os || 'node') : '—'} · model v{(stats && stats.model && stats.model.version) || 0} · feed v{(stats && stats.intel_version) || 0}</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="section wrap">
+        <h2>Threat desk</h2>
+        <p className="section-sub">Security news and practical advice{news && news.source === 'ollama' ? ' (AI-generated, grounded in live data)' : ''}.</p>
+        <div className="news-grid">
+          {news && (news.news || []).map((x, i) => (
+            <div className="news-card" key={'n' + i}>
+              <span className="news-kind kind-news">NEWS</span>
+              <div className="news-t">{x.title}</div><div className="news-d">{x.summary}</div>
+            </div>
+          ))}
+          {news && (news.advice || []).map((x, i) => (
+            <div className="news-card" key={'a' + i}>
+              <span className="news-kind kind-advice">ADVICE</span>
+              <div className="news-t">{x.title}</div><div className="news-d">{x.summary}</div>
+            </div>
+          ))}
+          {!news && <div className="feed-empty">Loading threat desk…</div>}
+        </div>
+      </section>
+    </main>
+  )
+}
+
 export default function App() {
   const route = useRoute()
   return (
     <>
       <Nav />
-      {route === 'ai' ? <AiPage /> : <Home />}
+      {route === 'ai' ? <AiPage /> : route === 'live' ? <LivePage /> : <Home />}
       <Footer />
     </>
   )

@@ -302,3 +302,67 @@ svg{display:block}
   .trust-grid{grid-template-columns:1fr}
   .nav-links a:not(.btn){display:none}
 }
+
+/* ===================== Live threat dashboard (#live) ===================== */
+.live-page{min-height:60vh}
+.live-head{text-align:center}
+.live-badge{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:800;
+  letter-spacing:.12em;color:var(--green);background:rgba(52,224,138,.1);border:1px solid rgba(52,224,138,.35);
+  padding:5px 12px;border-radius:999px}
+.live-badge.off{color:var(--amber);background:rgba(243,163,56,.1);border-color:rgba(243,163,56,.35)}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(52,224,138,.6);
+  animation:pulse 1.8s infinite}
+.live-dot.sm{width:7px;height:7px}
+.live-badge.off .live-dot{background:var(--amber);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,224,138,.6)}70%{box-shadow:0 0 0 8px rgba(52,224,138,0)}100%{box-shadow:0 0 0 0 rgba(52,224,138,0)}}
+
+.live-grid{display:grid;grid-template-columns:1.7fr 1fr;gap:18px;align-items:start;padding-top:28px}
+.live-col{display:flex;flex-direction:column;gap:18px}
+.panel-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);
+  border-radius:16px;padding:16px 18px}
+.pc-head{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;letter-spacing:.14em;
+  color:var(--muted);text-transform:uppercase;margin-bottom:12px}
+
+.feed{display:flex;flex-direction:column;gap:6px;max-height:520px;overflow:auto}
+.feed-empty{color:var(--faint);font-size:14px;padding:18px 4px;text-align:center}
+.feed-row{display:grid;grid-template-columns:24px 116px 92px 1fr auto;align-items:center;gap:10px;
+  padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg2);
+  animation:slidein .35s ease}
+.feed-row.mal{border-color:rgba(239,83,80,.4);background:rgba(239,83,80,.06)}
+@keyframes slidein{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.fr-ic{color:var(--muted);display:flex}
+.feed-row.mal .fr-ic{color:var(--red)}
+.fr-hash{font-family:ui-monospace,monospace;font-size:13px;color:var(--cyan)}
+.fr-tag{font-size:11px;font-weight:700;text-align:center;padding:3px 0;border-radius:6px}
+.t-mal{color:#fff;background:var(--red)}
+.t-pend{color:var(--amber);background:rgba(243,163,56,.14)}
+.fr-threat{font-size:13px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fr-time{font-size:12px;color:var(--faint);white-space:nowrap}
+
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar-row{display:grid;grid-template-columns:90px 1fr 34px;align-items:center;gap:10px}
+.bar-name{font-size:13px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{height:9px;background:var(--bg);border-radius:6px;overflow:hidden}
+.bar-fill{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--cyan),var(--green));
+  transition:width .6s ease}
+.bar-n{font-size:13px;font-weight:700;color:var(--muted);text-align:right}
+
+.gauge{margin-bottom:12px}
+.g-top{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:5px}
+.g-top b{color:var(--txt)}
+.g-bar{height:8px;background:var(--bg);border-radius:6px;overflow:hidden}
+.g-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width .6s ease}
+.node-meta{font-size:12px;color:var(--faint);margin-top:6px}
+
+.news-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.news-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);
+  border-radius:14px;padding:18px}
+.news-kind{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.1em;padding:3px 8px;
+  border-radius:6px;margin-bottom:10px}
+.kind-news{color:var(--cyan);background:rgba(39,216,238,.12)}
+.kind-advice{color:var(--green);background:rgba(52,224,138,.12)}
+.news-t{font-size:16px;font-weight:700;margin-bottom:6px}
+.news-d{font-size:14px;color:var(--muted);line-height:1.55}
+
+@media(max-width:880px){.live-grid{grid-template-columns:1fr}.news-grid{grid-template-columns:1fr}
+  .feed-row{grid-template-columns:22px 100px 80px 1fr;}.fr-time{display:none}}
