@@ -49,10 +49,18 @@ Sign-File "$payload\aether.exe"
 if ($gui) { Sign-File "$payload\aether-desktop.exe" }
 
 Write-Host ">> running makensis (GUI=$gui)"
+# choco installs NSIS but doesn't refresh PATH in this session - resolve it.
+$makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+if (-not $makensis) {
+  foreach ($c in @("$env:ProgramFiles\NSIS\makensis.exe", "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+    if (Test-Path $c) { $makensis = $c; break }
+  }
+}
+if (-not $makensis) { throw "makensis not found - is NSIS installed?" }
 if ($gui) {
-  & makensis /DWITH_GUI "installer\windows\aetherav.nsi"
+  & $makensis /DWITH_GUI "installer\windows\aetherav.nsi"
 } else {
-  & makensis "installer\windows\aetherav.nsi"
+  & $makensis "installer\windows\aetherav.nsi"
 }
 if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
 
