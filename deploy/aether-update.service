@@ -1,0 +1,17 @@
+# Client-side auto-update: pull the latest Ed25519-signed feed, verify it, and
+# apply it. Paired with aether-update.timer for "always current" behavior.
+# Set update.url in /opt/aetherav/aether.toml (or pass --url here).
+[Unit]
+Description=AetherAV signed-feed auto-update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/aetherav
+ExecStart=/usr/local/bin/aether -c /opt/aetherav/aether.toml update
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# Scheduled full scan (paired with aether-scan.timer).
+[Unit]
+Description=AetherAV scheduled full scan
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aether scan / --recursive --quarantine /var/lib/aether/quarantine
+WorkingDirectory=/usr/local/share/aether
+Nice=10
+IOSchedulingClass=idle

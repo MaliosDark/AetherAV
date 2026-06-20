@@ -1,0 +1,443 @@
+[
+{
+"ts": 0,
+"pid": 0,
+"action": "process_spawn",
+"child_pid": 4,
+"image": "C:\\\\Windows\\\\explorer.exe"
+},
+{
+"ts": 1,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1000,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 1,
+"pid": 1000,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 2,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1001,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 3,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1002,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 4,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1003,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 4,
+"pid": 1003,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 5,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1004,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 6,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1005,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+},
+{
+"ts": 7,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1006,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 7,
+"pid": 1006,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 8,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1007,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 9,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1008,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 10,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1009,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 10,
+"pid": 1009,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 11,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1010,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 12,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1011,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+},
+{
+"ts": 13,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1012,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 13,
+"pid": 1012,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 14,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1013,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 15,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1014,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 16,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1015,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 16,
+"pid": 1015,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 17,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1016,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 18,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1017,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+},
+{
+"ts": 19,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1018,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 19,
+"pid": 1018,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 20,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1019,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 21,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1020,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 22,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1021,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 22,
+"pid": 1021,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 23,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1022,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 24,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1023,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+},
+{
+"ts": 25,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1024,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 25,
+"pid": 1024,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 26,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1025,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 27,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1026,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 28,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1027,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 28,
+"pid": 1027,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 29,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1028,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 30,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1029,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+},
+{
+"ts": 31,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1030,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 31,
+"pid": 1030,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 32,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1031,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 33,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1032,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 34,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1033,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 34,
+"pid": 1033,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 35,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1034,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 36,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1035,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+},
+{
+"ts": 37,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1036,
+"image": "C:\\\\Program Files\\\\chrome.exe",
+"cmdline": "--user"
+},
+{
+"ts": 37,
+"pid": 1036,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 38,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1037,
+"image": "C:\\\\Program Files\\\\winword.exe",
+"cmdline": "--user"
+},
+{
+"ts": 39,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1038,
+"image": "C:\\\\Program Files\\\\excel.exe",
+"cmdline": "--user"
+},
+{
+"ts": 40,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1039,
+"image": "C:\\\\Program Files\\\\outlook.exe",
+"cmdline": "--user"
+},
+{
+"ts": 40,
+"pid": 1039,
+"action": "net_connect",
+"remote": "10.0.0.5",
+"port": 443
+},
+{
+"ts": 41,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1040,
+"image": "C:\\\\Program Files\\\\code.exe",
+"cmdline": "--user"
+},
+{
+"ts": 42,
+"pid": 4,
+"action": "process_spawn",
+"child_pid": 1041,
+"image": "C:\\\\Program Files\\\\slack.exe",
+"cmdline": "--user"
+}
+]

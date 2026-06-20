@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AetherAV</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ================= TOP BAR ================= -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="menu-toggle" id="menuToggle" title="Toggle menu"><i data-ic="menu"></i></button>
+        <img class="logo-mark-img" src="aetherav.png" alt="AetherAV logo" />
+        <img class="topbar-wordmark" src="aethertext.png" alt="AetherAV" />
+        <span class="pill pill-cyan"><i data-ic="lock"></i> Local-First</span>
+        <span class="pill pill-green"><i data-ic="check"></i> Offline Ready</span>
+      </div>
+      <div class="topbar-center">
+        <i data-ic="shield" class="ic-green"></i> System Status: <b class="ok">Protected</b>
+      </div>
+      <div class="topbar-right">
+        <div class="bell-wrap">
+          <button class="iconbtn" id="bellBtn" title="Notifications"><i data-ic="bell"></i><span class="bell-badge" id="bellBadge" hidden>0</span></button>
+          <div class="notif-panel" id="notifPanel" hidden>
+            <div class="notif-head"><span>Notifications</span><div class="notif-acts"><button id="notifRead" class="notif-link">Mark read</button><button id="notifClear" class="notif-link">Clear</button></div></div>
+            <div class="notif-list" id="notifList"><div class="notif-empty">No notifications yet</div></div>
+          </div>
+        </div>
+        <button class="iconbtn" data-link="settings" title="Settings"><i data-ic="gear"></i></button>
+        <span class="winsep"></span>
+        <button class="wbtn" data-win="min" title="Minimize"><i data-ic="min"></i></button>
+        <button class="wbtn" data-win="max" title="Maximize"><i data-ic="max"></i></button>
+        <button class="wbtn wbtn-close" data-win="close" title="Close"><i data-ic="close"></i></button>
+      </div>
+    </header>
+
+    <!-- ================= SIDEBAR ================= -->
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-emblem-img" src="aetherav.png" alt="AetherAV logo" />
+        <img class="brand-wordmark" src="aethertext.png" alt="AetherAV" />
+        <div class="brand-sub">Engine-First. Local-First.<br/>Private. Offline. Powerful.</div>
+        <div class="brand-ver">v2026.1.0</div>
+      </div>
+      <nav class="nav">
+        <a class="nav-item active" data-page="dashboard"><i data-ic="grid"></i><span>Dashboard</span></a>
+        <a class="nav-item" data-page="scan"><i data-ic="search"></i><span>Scan Center</span></a>
+        <a class="nav-item" data-page="realtime"><i data-ic="shield"></i><span>Real-Time Protection</span></a>
+        <a class="nav-item" data-page="network"><i data-ic="wifi"></i><span>Network Monitor</span></a>
+        <a class="nav-item" data-page="sentinel"><i data-ic="fingerprint"></i><span>Process Sentinel</span></a>
+        <a class="nav-item" data-page="shields"><i data-ic="shield"></i><span>Network &amp; Theft Shield</span></a>
+        <a class="nav-item" data-page="signatures"><i data-ic="file"></i><span>Signatures</span></a>
+        <a class="nav-item" data-page="behavior"><i data-ic="share"></i><span>Behavior Engine</span></a>
+        <a class="nav-item" data-page="sandbox"><i data-ic="box"></i><span>Sandbox</span></a>
+        <a class="nav-item" data-page="anomaly"><i data-ic="wave"></i><span>Anomaly</span></a>
+        <a class="nav-item" data-page="intel"><i data-ic="globe"></i><span>Threat Intel</span></a>
+        <a class="nav-item" data-page="quarantine"><i data-ic="lock"></i><span>Quarantine</span></a>
+        <a class="nav-item" data-page="reports"><i data-ic="doc"></i><span>Reports</span></a>
+        <a class="nav-item" data-page="settings"><i data-ic="gear"></i><span>Settings</span></a>
+      </nav>
+      <div class="engine-status">
+        <div class="es-title">Protection Engine</div>
+        <div class="es-run"><span class="dot"></span> Running</div>
+        <div class="es-label">Last Full Scan</div>
+        <div class="es-val">2h 14m ago</div>
+      </div>
+    </aside>
+
+    <!-- ================= MAIN ================= -->
+    <main class="main">
+      <!-- Row A: system status, full width on its own line -->
+      <section class="protected-row">
+        <div class="panel protected">
+          <div class="protected-info">
+            <div class="eyebrow">YOUR SYSTEM IS</div>
+            <div class="big-status">PROTECTED</div>
+            <div class="no-threats"><i data-ic="check"></i> No active threats detected</div>
+            <ul class="status-list">
+              <li><span>Real-Time Protection</span><b class="ok">ON</b></li>
+              <li><span>Behavior Monitoring</span><b class="ok">ON</b></li>
+              <li><span>Auto Updates</span><b class="ok">ON</b></li>
+              <li><span>Offline Mode</span><b class="cy">READY</b></li>
+              <li><span>Definitions Age</span><b>2h 14m</b></li>
+            </ul>
+          </div>
+          <div class="protected-emblem">
+            <div class="radar">
+              <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+              <svg viewBox="0 0 64 72" width="92" height="104"><path d="M32 3 59 13v22c0 17-11 30-27 36C16 65 5 52 5 35V13z" fill="none" stroke="url(#g3)" stroke-width="2.5"/><path d="M32 16l11 26h-8l-3-6-3 6h-8z" fill="#2ee6d6"/><defs><linearGradient id="g3" x1="0" y1="0" x2="64" y2="72"><stop offset="0" stop-color="#37f0dd"/><stop offset="1" stop-color="#1d86ac"/></linearGradient></defs></svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Row A2: quick actions + live system health, side by side -->
+      <section class="row-a2">
+        <div class="panel quick">
+          <div class="panel-h">QUICK ACTIONS</div>
+          <p class="muted">Run a scan or choose a custom verification profile.</p>
+          <div class="quick-row">
+            <button class="btn btn-primary" data-act="quick"><i data-ic="bolt"></i> Quick Scan</button>
+            <button class="btn" data-act="full"><i data-ic="shield"></i> Full Scan</button>
+            <button class="btn" data-act="custom"><i data-ic="gear"></i> Custom Scan</button>
+          </div>
+        </div>
+        <div class="panel sysmon">
+          <div class="panel-h-row"><span class="panel-h">SYSTEM HEALTH</span><span class="live-pill"><span class="dot"></span>LIVE</span></div>
+          <div id="syshealth"><div class="empty">…</div></div>
+        </div>
+      </section>
+
+      <!-- Row B: stats -->
+      <section class="stats" id="stats"></section>
+
+      <!-- Row C: engine modules -->
+      <section class="panel modules">
+        <div class="panel-h">ENGINE MODULES OVERVIEW</div>
+        <div class="module-grid" id="modules"></div>
+      </section>
+
+      <!-- Row D: recent detections -->
+      <section class="row-d">
+        <div class="panel detections">
+          <div class="panel-h">RECENT DETECTIONS</div>
+          <table class="dtable">
+            <thead><tr><th>Time</th><th>Item</th><th>Type</th><th>Risk</th><th>Action</th></tr></thead>
+            <tbody id="detections"></tbody>
+          </table>
+          <a class="more" data-link="detections">View All Detections <i data-ic="arrow"></i></a>
+        </div>
+      </section>
+
+      <!-- Network connection map: its own full-width row -->
+      <section class="graph-row">
+        <div class="panel graph">
+          <div class="panel-h-row">
+            <span class="panel-h">NETWORK CONNECTION MAP <span class="live">(Live)</span></span>
+            <span class="legend">
+              <i class="lg lg-center"></i>This host <i class="lg lg-net"></i>Connection
+              <i class="lg lg-mal"></i>Flagged / malicious
+            </span>
+          </div>
+          <div class="grapharea" id="graph"></div>
+          <a class="more" data-link="network">Open Network Monitor <i data-ic="arrow"></i></a>
+        </div>
+      </section>
+    </main>
+
+    <!-- ================= RIGHT COLUMN ================= -->
+    <aside class="right">
+      <div class="panel mitre">
+        <div class="panel-h-row"><span class="panel-h">MITRE ATT&CK MAPPING</span><span class="hint">Last 7 Days</span></div>
+        <ul class="mitre-list" id="mitre"></ul>
+      </div>
+      <div class="panel anomaly">
+        <div class="panel-h-row"><span class="panel-h">ANOMALY &amp; BASELINE</span><span class="hint">Last 24 Hours</span></div>
+        <div class="chart-legend"><i class="lg-dash"></i> Baseline <i class="lg-line"></i> Actual</div>
+        <div class="chartarea" id="chart"></div>
+      </div>
+      <div class="panel vault">
+        <div class="panel-h-row"><span class="panel-h">QUARANTINE VAULT</span><span class="hint" id="vault-count">312 Items</span></div>
+        <div class="vault-body">
+          <div class="vault-lock"><i data-ic="lock-big"></i></div>
+          <div class="vault-meta">
+            <div class="vault-title">Encrypted &amp; Isolated</div>
+            <div class="vault-algo"><i data-ic="check" class="ic-green"></i> AES-256-GCM</div>
+            <div class="vault-btns">
+              <button class="btn btn-primary sm" data-act="quarantine">View Quarantine</button>
+              <button class="btn sm" data-act="restore">Restore / Export</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel feed">
+        <div class="panel-h-row"><span class="panel-h">THREAT INTEL FEED</span><span class="hint ok">Up to date</span></div>
+        <ul class="feed-list" id="feed"></ul>
+        <button class="btn btn-primary sm" id="updateIntel" style="width:100%;margin-top:4px"><i data-ic="down"></i> Update Threat Intel</button>
+      </div>
+    </aside>
+
+    <!-- ================= PAGE HOST (non-dashboard views) ================= -->
+    <main class="page-host" id="pageHost"></main>
+
+    <!-- ================= STATUS BAR ================= -->
+    <footer class="statusbar">
+      <div class="sb-left"><span class="dot"></span> <span id="sb-net-down">1.1 KB/s</span> <i data-ic="down"></i></div>
+      <div class="sb-mid" id="sysstats"></div>
+      <span id="sb-ports" class="sb-ports"></span>
+      <div class="sb-right"><i data-ic="cloud-off"></i> Offline Mode</div>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+[package]
+name = "aether-unpack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Container extraction (ZIP/GZIP/TAR) so the engine can scan inside archives."
+
+[dependencies]
+aether-common = { workspace = true }
+zip = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+sevenz-rust = "0.6"
+walkdir = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }

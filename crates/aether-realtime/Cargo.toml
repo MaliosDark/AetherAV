@@ -1,0 +1,23 @@
+[package]
+name = "aether-realtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Real-time protection: live event sources feeding the behavioral engines."
+
+[dependencies]
+aether-common = { workspace = true }
+aether-behavior = { workspace = true }
+notify = { workspace = true }
+dns-lookup = { workspace = true }
+tracing = { workspace = true }
+# Live DNS-query sniffing needs libpcap + capture privileges; off by default.
+pcap = { version = "2", optional = true }
+
+# fanotify on-access protection is Linux-only.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
+[features]
+pcap = ["dep:pcap"]

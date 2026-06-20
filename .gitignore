@@ -1,0 +1,62 @@
+# ---- Private submission server
+/server/
+
+# ---- Rust build output (all workspaces) ----
+/target
+**/target
+**/*.rs.bk
+Cargo.lock.bak
+*.profraw
+
+# ---- Node / web build ----
+web/node_modules/
+web/dist/
+
+# ---- Release & packaging artifacts (regenerate via the build scripts) ----
+/dist/
+/dist-model/
+/dist-feed/
+installer/windows/AetherAV-Setup.exe
+installer/windows/payload/
+installer/macos/build/
+
+# ---- Training scratch ----
+tools/.train_out/
+**/.compiled.yarac
+
+# ---- Python build artifacts (training/import tooling) ----
+__pycache__/
+*.py[cod]
+unsloth_compiled_cache/
+
+# ---- Runtime / local state ----
+/quarantine
+*.log
+
+# ---- OS / editor noise ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+
+# ---- Downloaded threat data - NOT part of the program (fetched via updates) ----
+# Clients receive these through `aether update` / `aether model-update`.
+assets/signatures/*.db
+assets/signatures/*.ndb
+assets/models/intel.json
+assets/community-rules/
+assets/datasets/
+
+# ---- Model TRAINING source (dev only; the shipped brain is the .gguf) ----
+assets/models/aether-llm/
+
+# ---- Per-machine state written on THIS pc (never share) ----
+assets/models/settings.json
+assets/models/proc_baseline.json
+assets/models/last_update.json
+assets/models/*.version
+
+# ---- Secrets: NEVER commit the offline signing key or code-signing certs ----
+assets/keys/feed_private.key
+*.pfx
+*.p12

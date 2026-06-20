@@ -1,0 +1,38 @@
+[package]
+name = "aether-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "AetherAV command-line interface."
+
+[[bin]]
+name = "aether"
+path = "src/main.rs"
+
+[features]
+default = ["yara"]
+yara = ["aether-core/yara"]
+# Live DNS-query sniffing (`aether dnswatch`); needs libpcap + capture privileges.
+pcap = ["aether-realtime/pcap"]
+
+[dependencies]
+aether-common = { workspace = true }
+aether-config = { workspace = true }
+aether-core = { workspace = true }
+aether-signatures = { workspace = true }
+aether-behavior = { workspace = true }
+aether-sandbox = { workspace = true }
+aether-anomaly = { workspace = true }
+aether-realtime = { workspace = true }
+aether-firewall = { workspace = true }
+aether-quarantine = { workspace = true }
+aether-intel = { workspace = true }
+aether-daemon = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+tracing = { workspace = true }
+ureq = { workspace = true }
+serde_json = { workspace = true }
+aether-parsers.workspace = true

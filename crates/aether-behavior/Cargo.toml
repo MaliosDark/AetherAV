@@ -1,0 +1,17 @@
+[package]
+name = "aether-behavior"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Behavioral + graph detection engine with MITRE ATT&CK mapping."
+
+[dependencies]
+aether-common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+petgraph = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

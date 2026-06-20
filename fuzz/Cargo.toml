@@ -1,0 +1,54 @@
+# cargo-fuzz crate (its own workspace; nightly + cargo-fuzz only).
+#   cargo install cargo-fuzz
+#   cargo +nightly fuzz run parse_pe
+[workspace]
+
+[package]
+name = "aether-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+aether-parsers = { path = "../crates/aether-parsers" }
+aether-unpack = { path = "../crates/aether-unpack" }
+aether-intel = { path = "../crates/aether-intel" }
+
+[[bin]]
+name = "parse_pe"
+path = "fuzz_targets/parse_pe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_object"
+path = "fuzz_targets/parse_object.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_docs"
+path = "fuzz_targets/parse_docs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "unpack"
+path = "fuzz_targets/unpack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "intel_feeds"
+path = "fuzz_targets/intel_feeds.rs"
+test = false
+doc = false
+bench = false

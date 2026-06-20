@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+      - name: Test without YARA-X (constrained build)
+        run: cargo test --workspace --no-default-features
+
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  sandbox-unicorn:
+    name: sandbox (Unicorn emulation backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The Unicorn Engine sys crate builds libunicorn via cmake.
+      - name: install build deps
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: test with unicorn feature
+        run: cargo test -p aether-sandbox --features unicorn
+
+  bench-smoke:
+    name: bench smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Compile benches and run a single fast iteration to catch breakage.
+      - name: bench (smoke)
+        run: cargo bench -p aether-core --bench scan_bench -- --warm-up-time 0.1 --measurement-time 0.5 --sample-size 10

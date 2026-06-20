@@ -1,0 +1,22 @@
+# Real-time on-access protection (Linux, systemd).
+#   sudo cp packaging/systemd/aether-watch.service /etc/systemd/system/
+#   sudo systemctl enable --now aether-watch
+[Unit]
+Description=AetherAV real-time on-access protection
+After=network.target
+
+[Service]
+Type=simple
+# Adjust the path to the installed binary and the directory(ies) to protect.
+ExecStart=/usr/local/bin/aether watch /home --quarantine /var/lib/aether/quarantine
+WorkingDirectory=/usr/local/share/aether
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aether
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,137 @@
+[workspace]
+resolver = "2"
+# The Tauri desktop app and the cargo-fuzz crate are their own workspaces
+# (heavy / nightly-only deps); keep them out of the engine workspace.
+exclude = ["desktop", "fuzz", "server"]
+members = [
+    "crates/aether-common",
+    "crates/aether-config",
+    "crates/aether-signatures",
+    "crates/aether-parsers",
+    "crates/aether-unpack",
+    "crates/aether-ml",
+    "crates/aether-llm",
+    "crates/aether-behavior",
+    "crates/aether-sandbox",
+    "crates/aether-anomaly",
+    "crates/aether-quarantine",
+    "crates/aether-intel",
+    "crates/aether-plugins",
+    "crates/aether-realtime",
+    "crates/aether-firewall",
+    "crates/aether-core",
+    "crates/aether-daemon",
+    "crates/aether-cli",
+]
+
+# ---------------------------------------------------------------------------
+# Shared metadata: every crate inherits version/edition/license from here.
+# ---------------------------------------------------------------------------
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["AetherAV Contributors"]
+repository = "https://github.com/aether-av/aether"
+description = "AetherAV - a modern, modular, open-source antivirus engine written in Rust."
+
+# ---------------------------------------------------------------------------
+# Centralized dependency versions. Crates reference them with
+# `foo = { workspace = true }` so versions stay consistent across the tree.
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+# Internal crates. The two engine-bearing crates default their features OFF at
+# the workspace level; the YARA-X engine is re-enabled through the explicit
+# feature chain (aether-cli/yara -> aether-core/yara -> aether-signatures/yara),
+# so `cargo build` is full-featured and `--no-default-features` drops YARA-X.
+aether-common = { path = "crates/aether-common" }
+aether-config = { path = "crates/aether-config" }
+aether-signatures = { path = "crates/aether-signatures", default-features = false }
+aether-parsers = { path = "crates/aether-parsers" }
+aether-unpack = { path = "crates/aether-unpack" }
+aether-ml = { path = "crates/aether-ml" }
+aether-llm = { path = "crates/aether-llm" }
+aether-behavior = { path = "crates/aether-behavior" }
+aether-sandbox = { path = "crates/aether-sandbox" }
+aether-anomaly = { path = "crates/aether-anomaly" }
+aether-quarantine = { path = "crates/aether-quarantine" }
+aether-intel = { path = "crates/aether-intel" }
+aether-plugins = { path = "crates/aether-plugins" }
+aether-realtime = { path = "crates/aether-realtime" }
+aether-firewall = { path = "crates/aether-firewall" }
+aether-daemon = { path = "crates/aether-daemon" }
+aether-core = { path = "crates/aether-core", default-features = false }
+
+# CLI / config
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Errors / logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+
+# Hashing
+sha2 = "0.10"
+sha1 = "0.10"
+md-5 = "0.10"
+blake3 = "1.5"
+hex = "0.4"
+
+# Real-time / OS integration (Linux fanotify on-access protection)
+libc = "0.2"
+
+# HTTP client for free, no-registration threat-intel / reputation APIs
+ureq = "2"
+
+# Multi-pattern matching for the ClamAV-style hex signature engine
+aho-corasick = "1"
+
+# Parsing / detection
+goblin = "0.9"      # PE / ELF / Mach-O object parsing
+yara-x = "0.13"     # Pure-Rust YARA engine (YARA-X)
+memmap2 = "0.9"     # zero-copy file mapping for large samples
+walkdir = "2"       # recursive directory traversal
+rayon = "1.10"      # data-parallel scanning across cores
+petgraph = "0.6"    # process/file/network relationship graph
+notify = "6"        # cross-platform real-time filesystem watcher (inotify/FSEvents/ReadDirectoryChanges)
+dns-lookup = "3"    # cross-platform reverse DNS (getnameinfo) for connection->domain correlation
+iced-x86 = "1.21"   # pure-Rust x86/x64 disassembler for the sandbox analyzer
+chacha20poly1305 = "0.10"  # AEAD for the encrypted quarantine vault
+ed25519-dalek = "2"        # asymmetric signing of threat-intel feeds (supply-chain integrity)
+getrandom = "0.2"          # OS RNG for vault keys / nonces
+zip = { version = "2", default-features = false, features = ["deflate"] }  # archive extraction
+flate2 = "1"               # gzip decompression
+tar = "0.4"                # tar extraction
+
+# Test / bench
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+
+# ---------------------------------------------------------------------------
+# Release profile tuned for a security scanner: maximum runtime throughput.
+# ---------------------------------------------------------------------------
+[profile.release]
+opt-level = 3
+lto = "fat"          # whole-program optimization across crates
+codegen-units = 1    # better optimization at the cost of compile time
+panic = "abort"      # smaller binary, no unwinding in the hot scan path
+strip = true
+
+# Faster local iteration; keep some optimization for realistic dev scans.
+[profile.dev]
+opt-level = 1
+
+# Dependencies are always optimized even in dev (yara-x/goblin are hot).
+[profile.dev.package."*"]
+opt-level = 3
+
+# A dedicated profile for fuzzing / benchmarking with debug symbols.
+[profile.bench]
+inherits = "release"
+strip = false
+debug = true

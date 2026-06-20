@@ -1,0 +1,11 @@
+[package]
+name = "aether-firewall"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Threat-intelligence-driven firewall and web protection that drives each OS's native firewall (nftables / netsh / pf) and hosts file."
+
+[dependencies]

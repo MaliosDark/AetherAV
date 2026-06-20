@@ -1,0 +1,37 @@
+[package]
+name = "aether-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The AetherAV scan orchestrator: pipeline, heuristics, parallelism."
+
+[features]
+default = ["yara"]
+# Forward the YARA-X engine feature down to aether-signatures.
+yara = ["aether-signatures/yara"]
+
+[dependencies]
+aether-common = { workspace = true }
+aether-config = { workspace = true }
+aether-signatures = { workspace = true }
+aether-parsers = { workspace = true }
+aether-unpack = { workspace = true }
+aether-intel = { workspace = true }
+aether-sandbox = { workspace = true }
+aether-ml = { workspace = true }
+aether-llm = { workspace = true }
+aether-plugins = { workspace = true }
+tracing = { workspace = true }
+memmap2 = { workspace = true }
+walkdir = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = { workspace = true }
+zip = { workspace = true }
+
+[[bench]]
+name = "scan_bench"
+harness = false

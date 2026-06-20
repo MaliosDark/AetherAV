@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>AetherAV</title>
+    <organization>org.aetherav</organization>
+    <background file="background.png" mime-type="image/png" alignment="left" scaling="proportional"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="LICENSE_EULA.txt" mime-type="text/plain"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <options customize="always" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+
+    <!-- Component choices the user can toggle. -->
+    <choices-outline>
+        <line choice="choice_app"/>
+        <line choice="choice_cli"/>
+        <line choice="choice_rt"/>
+    </choices-outline>
+
+    <choice id="choice_app" title="AetherAV App" description="The AetherAV desktop application and detection engine.">
+        <pkg-ref id="org.aetherav.app"/>
+    </choice>
+    <choice id="choice_cli" title="Command-line scanner" description="Install the 'aether' command-line tool into /usr/local/bin.">
+        <pkg-ref id="org.aetherav.cli"/>
+    </choice>
+    <choice id="choice_rt" title="Real-Time Protection" description="Run on-access protection in the background (LaunchDaemon). Recommended.">
+        <pkg-ref id="org.aetherav.realtime"/>
+    </choice>
+
+    <pkg-ref id="org.aetherav.app"      version="2026.1.0">app.pkg</pkg-ref>
+    <pkg-ref id="org.aetherav.cli"      version="2026.1.0">cli.pkg</pkg-ref>
+    <pkg-ref id="org.aetherav.realtime" version="2026.1.0">realtime.pkg</pkg-ref>
+</installer-gui-script>

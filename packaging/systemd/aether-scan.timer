@@ -1,0 +1,13 @@
+# Daily scheduled scan at 03:00 (with catch-up if the machine was off).
+#   sudo cp packaging/systemd/aether-scan.{service,timer} /etc/systemd/system/
+#   sudo systemctl enable --now aether-scan.timer
+[Unit]
+Description=Run AetherAV full scan daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

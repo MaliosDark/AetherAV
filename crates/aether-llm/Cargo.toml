@@ -1,0 +1,12 @@
+[package]
+name = "aether-llm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "On-device compact-LLM classifier embedded as an AetherAV detection engine."
+
+[dependencies]
+aether-common = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }

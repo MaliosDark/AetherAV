@@ -1,0 +1,13 @@
+# Check for new signatures every hour (and shortly after boot). Persistent=true
+# means a missed run (machine asleep/off) fires as soon as it's back online, so
+# detection never falls behind.
+[Unit]
+Description=AetherAV auto-update (hourly)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

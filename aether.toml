@@ -1,0 +1,18 @@
+# AetherAV runtime config - Aegis-50M on-device LLM detection engine enabled.
+# Use:  ./target/debug/aether -c aether.toml scan <path>
+
+[engines]
+# Aegis-50M - our compact on-device classifier, fused as Engine 9
+llm = true
+llm_runner = "/home/nexland/.unsloth/llama.cpp/build_cli/bin/llama-completion"
+llm_model = "assets/models/aegis-50m.gguf"
+
+[update]
+# Always-current auto-update from our Ed25519-signed feed.
+# Set `url` to your published signed feed, then run `aether update --watch`
+# or enable the systemd timer in deploy/. Integrity is guaranteed by the
+# signature even over plain HTTP; HTTPS still recommended for privacy.
+enabled = true
+url = ""            # signed threat-intel feed (aether update)
+model_url = ""      # signed AI model manifest (aether model-update)
+interval_hours = 1

@@ -1,0 +1,25 @@
+[package]
+name = "aether-ml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Static machine-learning malware classifier for AetherAV."
+
+[features]
+default = []
+# Optional ONNX Runtime backend (LightGBM/XGBoost/transformer models exported
+# to ONNX). Off by default because it links the native onnxruntime library;
+# the pure-Rust logistic model needs no system dependencies.
+onnx = ["dep:ort"]
+
+[dependencies]
+aether-common = { workspace = true }
+aether-parsers = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+ort = { version = "2.0.0-rc.10", optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

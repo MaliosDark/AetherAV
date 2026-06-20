@@ -1,0 +1,46 @@
+; AetherAV minifilter driver - install information.
+; Class FSFilter Anti-Virus (load order group "FSFilter Anti-Virus").
+[Version]
+Signature   = "$Windows NT$"
+Class       = "AntiVirus"
+ClassGuid   = {b1d1a169-c54f-4379-81db-bee7d88d7454}
+Provider    = %Provider%
+DriverVer   =
+CatalogFile = aetherav.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir          = 12            ; %windir%\system32\drivers
+AetherAV.DriverFiles    = 12
+
+[DefaultInstall.NTamd64]
+OptionDesc  = %ServiceDesc%
+CopyFiles   = AetherAV.DriverFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService  = %ServiceName%,,AetherAV.Service
+
+[AetherAV.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDesc%
+ServiceBinary  = %12%\aetherav.sys
+ServiceType    = 2                       ; FILE_SYSTEM_DRIVER
+StartType      = 0                       ; BOOT_START (load early to protect boot)
+ErrorControl   = 1
+LoadOrderGroup = "FSFilter Anti-Virus"
+AddReg         = AetherAV.AddRegistry
+
+[AetherAV.AddRegistry]
+HKR,"Instances","DefaultInstance",0x00000000,%DefaultInstance%
+HKR,"Instances\"%Instance%,"Altitude",0x00000000,"320000"
+HKR,"Instances\"%Instance%,"Flags",0x00010001,0x0
+
+[AetherAV.DriverFiles]
+aetherav.sys
+
+[Strings]
+Provider        = "AetherAV"
+ServiceName     = "AetherAV"
+ServiceDesc     = "AetherAV real-time on-access scanning (minifilter)"
+DefaultInstance = "AetherAV Instance"
+Instance        = "AetherAV Instance"

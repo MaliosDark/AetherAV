@@ -1,0 +1,43 @@
+# Standalone workspace so the engine workspace never pulls the GUI toolchain.
+[workspace]
+
+[package]
+name = "aether-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "AetherAV cross-platform desktop application (Tauri v2)."
+license = "Apache-2.0"
+
+[lib]
+name = "aether_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The real AetherAV engine - the GUI is a thin shell over these crates.
+aether-core = { path = "../../crates/aether-core" }
+aether-config = { path = "../../crates/aether-config" }
+aether-signatures = { path = "../../crates/aether-signatures" }
+aether-common = { path = "../../crates/aether-common" }
+aether-intel = { path = "../../crates/aether-intel" }
+aether-realtime = { path = "../../crates/aether-realtime" }
+aether-firewall = { path = "../../crates/aether-firewall" }
+aether-quarantine = { path = "../../crates/aether-quarantine" }
+aether-unpack = { path = "../../crates/aether-unpack" }
+
+# Real system metrics + in-app threat-intel downloads.
+sysinfo = "0.33"
+ureq = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

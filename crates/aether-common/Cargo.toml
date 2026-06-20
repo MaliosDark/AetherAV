@@ -1,0 +1,13 @@
+[package]
+name = "aether-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared types, verdicts, errors and logging for AetherAV."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

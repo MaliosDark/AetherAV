@@ -1,0 +1,89 @@
+name: release
+
+# Build the signed installers for all three platforms on a version tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build engine
+        run: cargo build --release -p aether-cli
+      - name: Build .deb
+        run: bash installer/linux/build-deb.sh
+      - name: Stage CLI tarball (engine + install.sh)
+        run: |
+          mkdir -p stage/aetherav
+          cp target/release/aether stage/aetherav/
+          cp -r assets stage/aetherav/assets
+          cp installer/linux/install.sh installer/LICENSE_EULA.txt stage/aetherav/
+          tar -C stage -czf dist/aetherav-linux-x86_64.tar.gz aetherav
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installers
+          path: dist/*
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install NSIS
+        run: choco install nsis -y
+      - name: Build + package (+ sign if cert provided)
+        shell: pwsh
+        env:
+          WIN_CERT_PFX: ${{ secrets.WIN_CERT_PFX_PATH }}
+          WIN_CERT_PASS: ${{ secrets.WIN_CERT_PASS }}
+        run: ./installer/windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build + package (+ sign/notarize if identity provided)
+        env:
+          MAC_INSTALLER_IDENTITY: ${{ secrets.MAC_INSTALLER_IDENTITY }}
+          MAC_NOTARY_PROFILE: ${{ secrets.MAC_NOTARY_PROFILE }}
+        run: bash installer/macos/build-pkg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: dist/*.pkg
+
+  # Ed25519-sign every artifact + publish the GitHub Release.
+  release:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Collect
+        run: mkdir -p dist && find artifacts -type f -exec cp {} dist/ \;
+      - name: Checksums + Ed25519 signature
+        env:
+          AETHER_FEED_PRIVATE_KEY: ${{ secrets.AETHER_FEED_PRIVATE_KEY }}
+        run: |
+          cd dist && sha256sum * > SHA256SUMS
+          # If the offline key is provided as a CI secret, sign the checksum file.
+          if [ -n "$AETHER_FEED_PRIVATE_KEY" ]; then
+            printf '%s' "$AETHER_FEED_PRIVATE_KEY" > /tmp/feed.key
+            cargo build --release -p aether-cli --manifest-path ../Cargo.toml
+            ../target/release/aether signfile SHA256SUMS --key /tmp/feed.key || true
+            rm -f /tmp/feed.key
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

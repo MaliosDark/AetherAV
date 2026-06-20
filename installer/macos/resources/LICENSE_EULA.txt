@@ -1,0 +1,42 @@
+AetherAV - End User License Agreement
+======================================
+
+AetherAV is free and open-source software, licensed under the Apache License,
+Version 2.0. By installing AetherAV you agree to the terms below.
+
+1. LICENSE
+   AetherAV is provided under the Apache License 2.0. You may use, copy, modify
+   and redistribute it under those terms. The full license text is available at
+   https://www.apache.org/licenses/LICENSE-2.0 and in the source repository.
+
+2. WHAT AETHERAV DOES
+   AetherAV is an antivirus engine. With your consent it can:
+     - scan files, memory and processes for malware;
+     - provide real-time, on-access protection in the background;
+     - quarantine or remove detected threats;
+     - apply firewall and web-protection rules using your operating system's
+       own facilities (these require administrator/root privileges).
+
+3. PRIVACY
+   AetherAV is local-first and offline by default. It does not transmit your
+   files or personal data. Sharing a sample for analysis is strictly opt-in,
+   anonymous and send-only. Signature/model updates are cryptographically
+   signed and verified before use.
+
+4. PERMISSIONS
+   Real-time protection, the firewall and web protection require elevated
+   (administrator/root) privileges to function. You may decline these
+   components during installation; the rest of AetherAV will still work.
+
+5. NO WARRANTY
+   AetherAV is provided "AS IS", WITHOUT WARRANTY OF ANY KIND, express or
+   implied, including but not limited to the warranties of merchantability,
+   fitness for a particular purpose and non-infringement. No antivirus can
+   guarantee detection of all threats. In no event shall the authors or
+   copyright holders be liable for any claim, damages or other liability.
+
+6. THIRD-PARTY DATA
+   AetherAV may ingest publicly available threat-intelligence databases. Such
+   data is re-validated and cryptographically signed before distribution.
+
+You must accept this agreement to continue the installation.

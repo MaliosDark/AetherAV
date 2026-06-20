@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AetherAV",
+  "version": "0.1.0",
+  "identifier": "com.aetherav.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "AetherAV",
+        "width": 1672,
+        "height": 941,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "resizable": true,
+        "decorations": true,
+        "theme": "Dark",
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "Utility",
+    "shortDescription": "Modern open-source antivirus engine",
+    "longDescription": "AetherAV — engine-first, local-first antivirus with signature, heuristic, ML, behavioral, sandbox, anomaly, quarantine and threat-intel layers."
+  }
+}

@@ -1,0 +1,29 @@
+[package]
+name = "aether-signatures"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hash database, Bloom pre-filter and YARA-X engine for AetherAV."
+
+[features]
+default = ["yara"]
+# YARA-X pulls a non-trivial dependency tree; gate it so the rest of the
+# engine can build in constrained CI without it.
+yara = ["dep:yara-x"]
+
+[dependencies]
+aether-common = { workspace = true }
+sha2 = { workspace = true }
+sha1 = { workspace = true }
+md-5 = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+aho-corasick = { workspace = true }
+tracing = { workspace = true }
+walkdir = { workspace = true }
+yara-x = { workspace = true, optional = true }
+tlsh2 = { version = "1.1.0", features = ["diff"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

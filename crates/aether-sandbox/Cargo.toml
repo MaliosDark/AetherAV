@@ -1,0 +1,24 @@
+[package]
+name = "aether-sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Dynamic sandbox / emulation + anti-evasion detection for AetherAV."
+
+[features]
+default = []
+# Full CPU emulation via the Unicorn Engine (bundles & builds libunicorn with
+# cmake). Off by default so the workspace always builds without a C toolchain;
+# the pure-Rust iced-x86 analyzer is the always-available backend.
+unicorn = ["dep:unicorn-engine"]
+
+[dependencies]
+aether-common = { workspace = true }
+aether-behavior = { workspace = true }
+iced-x86 = { workspace = true }
+tracing = { workspace = true }
+unicorn-engine = { version = "2", optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

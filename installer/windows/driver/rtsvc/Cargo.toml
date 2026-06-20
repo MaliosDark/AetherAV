@@ -1,0 +1,23 @@
+# AetherAV Windows real-time user-mode service - the companion to the
+# aetherav.sys minifilter. Windows-only; intentionally OUTSIDE the root
+# workspace (its own [workspace]) so it never affects the Linux build.
+[package]
+name = "aether-rtsvc"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[[bin]]
+name = "aether-rtsvc"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_InstallableFileSystems",
+] }
+windows-service = "0.7"
+aether-core = { path = "../../../../crates/aether-core" }
+aether-config = { path = "../../../../crates/aether-config" }
+aether-common = { path = "../../../../crates/aether-common" }
