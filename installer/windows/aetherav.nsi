@@ -15,6 +15,14 @@ SetCompressor /SOLID lzma
 !define VERSION      "2026.1.0"
 !define DESKBIN      "aether-desktop.exe"
 !define CLIBIN       "aether.exe"
+; The desktop GUI is bundled only when build.ps1 passes /DWITH_GUI (i.e. the
+; Tauri app compiled). Otherwise this is a CLI-only install and app shortcuts
+; point at the scanner. Either way the engine + real-time protection install.
+!ifdef WITH_GUI
+  !define APPTARGET  "${DESKBIN}"
+!else
+  !define APPTARGET  "${CLIBIN}"
+!endif
 !define RTTASK       "AetherAV Real-Time Protection"
 !define UNINSTKEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
@@ -38,11 +46,13 @@ RequestExecutionLevel admin
 !define MUI_WELCOMEPAGE_TITLE "Welcome to the ${APPNAME} Setup"
 !define MUI_WELCOMEPAGE_TEXT "This wizard will install ${APPNAME} ${VERSION} - the open-source antivirus with on-device AI, behavioral defense, a threat-intelligence firewall and tamper-proof updates.$\r$\n$\r$\nClose other applications before continuing, then click Next."
 
-; ---- Finish page: offer to launch ----
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${DESKBIN}"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch ${APPNAME} now"
+; ---- Finish page: offer to launch (GUI only) ----
+!ifdef WITH_GUI
+  !define MUI_FINISHPAGE_RUN "$INSTDIR\${DESKBIN}"
+  !define MUI_FINISHPAGE_RUN_TEXT "Launch ${APPNAME} now"
+!endif
 !define MUI_FINISHPAGE_LINK "Visit the AetherAV project"
-!define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/aetherav/aetherav"
+!define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/MaliosDark/AetherAV"
 
 ; ---- Pages ----
 !insertmacro MUI_PAGE_WELCOME
@@ -65,7 +75,9 @@ RequestExecutionLevel admin
 Section "AetherAV core engine + app" SEC_CORE
   SectionIn RO
   SetOutPath "$INSTDIR"
+!ifdef WITH_GUI
   File "payload/${DESKBIN}"
+!endif
   File "payload/${CLIBIN}"
   File "assets/aetherav.ico"
   SetOutPath "$INSTDIR\assets"
@@ -101,12 +113,12 @@ SectionEnd
 
 Section "Start Menu shortcuts" SEC_SM
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
-  CreateShortCut  "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${DESKBIN}" "" "$INSTDIR\aetherav.ico"
+  CreateShortCut  "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${APPTARGET}" "" "$INSTDIR\aetherav.ico"
   CreateShortCut  "$SMPROGRAMS\${APPNAME}\Uninstall ${APPNAME}.lnk" "$INSTDIR\Uninstall.exe"
 SectionEnd
 
 Section "Desktop shortcut" SEC_DESK
-  CreateShortCut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${DESKBIN}" "" "$INSTDIR\aetherav.ico"
+  CreateShortCut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${APPTARGET}" "" "$INSTDIR\aetherav.ico"
 SectionEnd
 
 Section "Explorer right-click: Scan with AetherAV" SEC_CTX
