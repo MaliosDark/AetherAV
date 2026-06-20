@@ -423,3 +423,9 @@ svg{display:block}
 @media (min-width:1025px){ .live-grid{grid-template-columns:1.7fr 1fr} }
 @media (max-width:1024px) and (min-width:861px){ .live-grid{grid-template-columns:1.4fr 1fr} }
 @media (max-width:860px){ .live-grid{grid-template-columns:1fr} .feed{max-height:520px} }
+
+/* fit the widest stat number (e.g. 1,638,545) so the last digit never clips */
+.sv{font-size:clamp(18px,2.3vw,25px);letter-spacing:-.3px;white-space:nowrap;padding:0 2px;font-variant-numeric:tabular-nums}
+.stat{padding:18px 12px}
+.stats{grid-template-columns:repeat(auto-fit,minmax(156px,1fr))}
+@media (max-width:560px){ .sv{font-size:clamp(18px,5vw,23px)} }
