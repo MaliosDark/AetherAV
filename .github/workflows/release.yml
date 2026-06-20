@@ -1,83 +1,149 @@
 name: release
 
-# Build the signed installers for all three platforms on a version tag.
+# Build the signed installers for every OS + CPU architecture on a version tag
+# (or manually via "Run workflow"), then publish them as a GitHub Release.
+#
+# Coverage:
+#   Linux   - x86_64 + aarch64   (.deb + portable .tar.gz)
+#   macOS   - universal          (.pkg wizard + drag-to-install .dmg; Intel + Apple Silicon)
+#   Windows - x86_64 + arm64     (NSIS .exe)
+#
+# ARM legs run on native GitHub-hosted ARM runners. They are best-effort:
+# a flaky ARM/dmg leg must not block publishing the rest (continue-on-error +
+# the release job runs with `always()` and ships whatever artifacts exist).
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+  # ---------------------------------------------------------------- Linux
   linux:
-    runs-on: ubuntu-latest
+    name: linux (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: x86_64,  arch: amd64, runner: ubuntu-latest }
+          - { label: aarch64, arch: arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Version from tag
+        run: echo "VER=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - name: Build engine
         run: cargo build --release -p aether-cli
       - name: Build .deb
+        env:
+          ARCH: ${{ matrix.arch }}
         run: bash installer/linux/build-deb.sh
-      - name: Stage CLI tarball (engine + install.sh)
+      - name: Stage portable CLI tarball (engine + install.sh)
         run: |
-          mkdir -p stage/aetherav
+          mkdir -p dist stage/aetherav
           cp target/release/aether stage/aetherav/
           cp -r assets stage/aetherav/assets
           cp installer/linux/install.sh installer/LICENSE_EULA.txt stage/aetherav/
-          tar -C stage -czf dist/aetherav-linux-x86_64.tar.gz aetherav
+          tar -C stage -czf "dist/aetherav-linux-${{ matrix.label }}.tar.gz" aetherav
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-installers
+          name: linux-${{ matrix.label }}
           path: dist/*
 
+  # ---------------------------------------------------------------- macOS
+  macos:
+    name: macos (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Version from tag
+        run: echo "VER=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build + package the .pkg wizard (universal; sign/notarize if identity set)
+        env:
+          MAC_INSTALLER_IDENTITY: ${{ secrets.MAC_INSTALLER_IDENTITY }}
+          MAC_NOTARY_PROFILE: ${{ secrets.MAC_NOTARY_PROFILE }}
+        run: bash installer/macos/build-pkg.sh
+      # The .dmg needs the full Tauri .app bundle; building it is heavier and may
+      # fail on a bare runner, so it's best-effort and never blocks the release.
+      - name: Build desktop app (Tauri) for the .dmg
+        id: tauri
+        continue-on-error: true
+        working-directory: desktop/src-tauri
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build
+      - name: Build drag-to-install .dmg
+        if: steps.tauri.outcome == 'success'
+        continue-on-error: true
+        env:
+          MAC_APP_IDENTITY: ${{ secrets.MAC_APP_IDENTITY }}
+          MAC_NOTARY_PROFILE: ${{ secrets.MAC_NOTARY_PROFILE }}
+        run: bash installer/macos/build-dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: dist/*
+
+  # ---------------------------------------------------------------- Windows
   windows:
-    runs-on: windows-latest
+    name: windows (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: windows-latest }
+          - { arch: arm64, runner: windows-11-arm }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install NSIS
-        run: choco install nsis -y
+        run: choco install nsis -y --no-progress
       - name: Build + package (+ sign if cert provided)
         shell: pwsh
         env:
           WIN_CERT_PFX: ${{ secrets.WIN_CERT_PFX_PATH }}
           WIN_CERT_PASS: ${{ secrets.WIN_CERT_PASS }}
-        run: ./installer/windows/build.ps1
+        run: |
+          $ver = "$env:GITHUB_REF_NAME" -replace '^v',''
+          if (-not $ver) { $ver = "2026.1.0" }
+          ./installer/windows/build.ps1 -Version $ver
+          # Disambiguate the artifact by arch so the two Windows legs don't collide.
+          $exe = Get-ChildItem dist\AetherAV-Setup-*.exe | Select-Object -First 1
+          if ($exe) { Rename-Item $exe.FullName "AetherAV-Setup-$ver-${{ matrix.arch }}.exe" }
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
+          name: windows-${{ matrix.arch }}
           path: dist/*.exe
 
-  macos:
-    runs-on: macos-latest
+  # ------------------------------------------- Sign everything + publish Release
+  release:
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    # Run even if an ARM/dmg leg failed, but only actually publish for tags.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build + package (+ sign/notarize if identity provided)
-        env:
-          MAC_INSTALLER_IDENTITY: ${{ secrets.MAC_INSTALLER_IDENTITY }}
-          MAC_NOTARY_PROFILE: ${{ secrets.MAC_NOTARY_PROFILE }}
-        run: bash installer/macos/build-pkg.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-installer
-          path: dist/*.pkg
-
-  # Ed25519-sign every artifact + publish the GitHub Release.
-  release:
-    needs: [linux, windows, macos]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
-      - name: Collect
-        run: mkdir -p dist && find artifacts -type f -exec cp {} dist/ \;
+      - name: Collect all installers into dist/
+        run: |
+          mkdir -p dist
+          find artifacts -type f -exec cp -n {} dist/ \;
+          echo "Installers to publish:"; ls -lh dist/
       - name: Checksums + Ed25519 signature
         env:
           AETHER_FEED_PRIVATE_KEY: ${{ secrets.AETHER_FEED_PRIVATE_KEY }}
         run: |
           cd dist && sha256sum * > SHA256SUMS
-          # If the offline key is provided as a CI secret, sign the checksum file.
+          # If the offline signing key is provided as a CI secret, sign the
+          # checksum file so clients can verify the whole release with `aether verifyfile`.
           if [ -n "$AETHER_FEED_PRIVATE_KEY" ]; then
             printf '%s' "$AETHER_FEED_PRIVATE_KEY" > /tmp/feed.key
             cargo build --release -p aether-cli --manifest-path ../Cargo.toml
@@ -87,3 +153,4 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          generate_release_notes: true

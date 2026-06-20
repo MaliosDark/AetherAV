@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Build a Debian/Ubuntu .deb for the AetherAV CLI engine.
-#   ./build-deb.sh            -> dist/aetherav_<ver>_amd64.deb
+#   ./build-deb.sh                 -> dist/aetherav_<ver>_amd64.deb
+#   ARCH=arm64 ./build-deb.sh      -> dist/aetherav_<ver>_arm64.deb
+# ARCH is the Debian arch name (amd64 / arm64); the engine binary must already
+# be built for that arch (native runner or cross-compile) at target/release/aether.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
 VER="${VER:-2026.1.0}"
-ARCH="amd64"
+ARCH="${ARCH:-amd64}"
 BIN="$(ls target/release/aether 2>/dev/null || ls target/debug/aether 2>/dev/null || true)"
 [ -n "$BIN" ] || { echo "build the engine first: cargo build --release -p aether-cli"; exit 1; }
 
