@@ -9,6 +9,10 @@
 #   $env:WIN_CERT_PASS = "..."
 param([string]$Version = "2026.1.0")
 $ErrorActionPreference = "Stop"
+# PowerShell 7.4+ otherwise THROWS on any native non-zero exit (e.g. the
+# best-effort GUI build), aborting before our explicit $LASTEXITCODE checks.
+# We handle native exit codes ourselves, so disable that auto-throw.
+$PSNativeCommandUseErrorActionPreference = $false
 Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 Write-Host ">> building CLI engine (required)"
