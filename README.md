@@ -8,13 +8,16 @@
 
 **Free. Auditable. Tamper-proof updates. On-device AI.**
 
-[![CI](https://github.com/aetherav/aetherav/actions/workflows/ci.yml/badge.svg)](https://github.com/aetherav/aetherav/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aetherav/aetherav/badge)](https://scorecard.dev/viewer/?uri=github.com/aetherav/aetherav)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/0/badge)](https://www.bestpractices.dev)
+[![CI](https://github.com/MaliosDark/AetherAV/actions/workflows/ci.yml/badge.svg)](https://github.com/MaliosDark/AetherAV/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MaliosDark/AetherAV/badge)](https://scorecard.dev/viewer/?uri=github.com/MaliosDark/AetherAV)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org)
 
-<sub>Badge readiness: [docs/OPENSSF.md](docs/OPENSSF.md). Replace the Best-Practices `0` with the project id after registering at bestpractices.dev.</sub>
+<sub>Badge readiness: [docs/OPENSSF.md](docs/OPENSSF.md). The OpenSSF Best-Practices badge will be added after registering the project at bestpractices.dev.</sub>
+
+<br/>
+
+<img src="web/src/app-screenshot.jpg" alt="AetherAV desktop dashboard - system protected, real-time engines, MITRE ATT&CK mapping, quarantine vault and threat-intel feed" width="900">
 
 </div>
 

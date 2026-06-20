@@ -33,7 +33,7 @@ edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
 authors = ["AetherAV Contributors"]
-repository = "https://github.com/aether-av/aether"
+repository = "https://github.com/MaliosDark/AetherAV"
 description = "AetherAV - a modern, modular, open-source antivirus engine written in Rust."
 
 # ---------------------------------------------------------------------------
