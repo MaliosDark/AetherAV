@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import shot from './app-screenshot.jpg'
 import logo from './aetherav.png'
 import wordmark from './aethertext.png'
@@ -683,94 +683,67 @@ function ago(ts) {
   return Math.floor(s / 86400) + 'd ago'
 }
 
+/* Tween a number toward its target. On mount it eases 0 -> value (a nice
+   reveal); afterwards it animates only the DELTA (prev -> new), so live ticks
+   "add on" smoothly instead of recounting the whole number from zero. */
+function useTween(value) {
+  const [disp, setDisp] = useState(0)
+  const prev = useRef(0)
+  useEffect(() => {
+    const from = prev.current, to = value || 0
+    prev.current = to
+    if (from === to) { setDisp(to); return }
+    let raf, t0
+    const dur = Math.min(900, 240 + Math.abs(to - from) * 2)
+    const step = t => {
+      if (!t0) t0 = t
+      const k = Math.min(1, (t - t0) / dur)
+      setDisp(Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3))))
+      if (k < 1) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [value])
+  return disp
+}
 function Counter({ value, label }) {
-  const n = useCountUp(value)
+  const n = useTween(value)
   return <div className="stat"><div className="sv">{fmt(n)}</div><div className="sl">{label}</div></div>
 }
-
-/* ---- Simulated community activity (keeps the live view feeling alive when the
-   real community feed is quiet). Real data from the API always takes priority. ---- */
-const SIM_FAMILIES = [
-  ['RedLine', 412], ['LummaC2', 388], ['AgentTesla', 341], ['AsyncRAT', 297],
-  ['Formbook', 256], ['Remcos', 223], ['Emotet', 197], ['Amadey', 174],
-  ['Vidar', 152], ['Qakbot', 131], ['NjRAT', 118], ['Raccoon', 99],
-]
-const SIM_NAMES = SIM_FAMILIES.map(f => f[0])
-const _hex = '0123456789abcdef'
-const randHex = n => Array.from({ length: n }, () => _hex[Math.floor(Math.random() * 16)]).join('')
-const pick = a => a[Math.floor(Math.random() * a.length)]
-function simRow(secondsAgo) {
-  const mal = Math.random() < 0.58
-  const h = randHex(64)
-  return {
-    sha256: h, short: h.slice(0, 12),
-    verdict: mal ? 'malicious' : 'pending',
-    threat: mal ? `Community.YARA.${pick(SIM_NAMES)}` : 'queued for analysis',
-    ts: Math.floor(Date.now() / 1000) - secondsAgo,
-  }
+function Num({ value, suffix }) {
+  const n = useTween(value)
+  return <>{fmt(n)}{suffix || ''}</>
 }
 
 function LivePage() {
+  // All live activity is emitted by the server (/api/community): persistent,
+  // identical for every visitor, and never resets on reload.
   const [stats, setStats] = useState(null)
-  const [live, setLive] = useState(null)
-  const [threats, setThreats] = useState(null)
+  const [comm, setComm] = useState(null)
   const [news, setNews] = useState(null)
-  const [sys, setSys] = useState(null)
-  const [online, setOnline] = useState(true)
+  const [online, setOnline] = useState(false)
 
   useEffect(() => {
     let on = true
-    const fast = async () => {
-      const [l, y] = await Promise.all([jget('/api/live'), jget('/api/system')])
+    const tick = async () => {
+      const c = await jget('/api/community')
       if (!on) return
-      setOnline(!!(l || y))
-      if (l) setLive(l)
-      if (y) setSys(y)
+      setOnline(!!c)
+      if (c) setComm(c)
     }
     const slow = async () => {
-      const [s, t, n] = await Promise.all([jget('/api/stats'), jget('/api/threats'), jget('/api/news')])
+      const [s, n] = await Promise.all([jget('/api/stats'), jget('/api/news')])
       if (!on) return
       if (s) setStats(s)
-      if (t) setThreats(t)
       if (n) setNews(n)
     }
-    fast(); slow()
-    const a = setInterval(fast, 5000), b = setInterval(slow, 60000)
+    tick(); slow()
+    const a = setInterval(tick, 4000), b = setInterval(slow, 60000)
     return () => { on = false; clearInterval(a); clearInterval(b) }
   }, [])
 
-  // Simulated community pulse - real API data overrides it whenever present.
-  const [sim, setSim] = useState(() => {
-    const analyzed = 24000 + Math.floor(Math.random() * 13000)
-    return {
-      feed: Array.from({ length: 14 }, (_, i) => simRow(i * 16 + 4)),
-      analyzed,
-      submissions: 460000 + Math.floor(Math.random() * 140000),
-      flagged: 8200 + Math.floor(Math.random() * 4200),
-      scanners: 1200 + Math.floor(Math.random() * 750),
-      countries: 62 + Math.floor(Math.random() * 26),
-      online: 900 + Math.floor(Math.random() * 1900),
-      verdictMs: 38 + Math.floor(Math.random() * 42),
-    }
-  })
-  useEffect(() => {
-    const t = setInterval(() => {
-      setSim(s => ({
-        ...s,
-        feed: [simRow(0), ...s.feed].slice(0, 40),
-        analyzed: s.analyzed + 1 + Math.floor(Math.random() * 6),
-        submissions: s.submissions + 1 + Math.floor(Math.random() * 4),
-        flagged: s.flagged + (Math.random() < 0.4 ? 1 : 0),
-        online: Math.max(700, s.online + (Math.random() < 0.5 ? -1 : 1) * Math.floor(Math.random() * 11)),
-      }))
-    }, 3200)
-    return () => clearInterval(t)
-  }, [])
-
-  const realItems = (live && live.items) || []
-  const items = realItems.length ? realItems : sim.feed
-  const realFams = (threats && threats.families) || []
-  const fams = realFams.length ? realFams : SIM_FAMILIES.map(([name, count]) => ({ name, count }))
+  const items = (comm && comm.feed) || []
+  const fams = (comm && comm.families) || []
   const famMax = fams.reduce((m, f) => Math.max(m, f.count), 1)
 
   return (
@@ -792,8 +765,8 @@ function LivePage() {
           <Counter value={stats ? stats.iocs : 0} label="Threat-Intel IOCs" />
           <Counter value={stats ? stats.yara_rules : 0} label="YARA Rules" />
           <Counter value={stats ? stats.patterns : 0} label="Pattern Signatures" />
-          <Counter value={(live && live.total_submissions) || sim.submissions} label="Community Submissions" />
-          <Counter value={(live && live.flagged) || sim.flagged} label="Flagged Threats" />
+          <Counter value={comm ? comm.submissions : 0} label="Community Submissions" />
+          <Counter value={comm ? comm.flagged : 0} label="Flagged Threats" />
         </div>
       </section>
 
@@ -833,12 +806,12 @@ function LivePage() {
           <div className="panel-card">
             <div className="pc-head"><span className="live-dot sm" /> COMMUNITY PULSE</div>
             <div className="comm">
-              <div className="comm-row"><span>Files analyzed today</span><b>{fmt(sim.analyzed)}</b></div>
-              <div className="comm-row"><span>Active scanners</span><b>{fmt(sim.scanners)}</b></div>
-              <div className="comm-row"><span>Countries protected</span><b>{sim.countries}</b></div>
-              <div className="comm-row"><span>Avg. verdict time</span><b>{sim.verdictMs} ms</b></div>
+              <div className="comm-row"><span>Files analyzed today</span><b><Num value={comm ? comm.analyzed_today : 0} /></b></div>
+              <div className="comm-row"><span>Active scanners</span><b><Num value={comm ? comm.scanners : 0} /></b></div>
+              <div className="comm-row"><span>Countries protected</span><b>{comm ? comm.countries : 0}</b></div>
+              <div className="comm-row"><span>Avg. verdict time</span><b><Num value={comm ? comm.verdict_ms : 0} suffix=" ms" /></b></div>
             </div>
-            <div className="comm-foot"><span className="live-dot sm" />{fmt(sim.online)} protections online now</div>
+            <div className="comm-foot"><span className="live-dot sm" /><Num value={comm ? comm.online : 0} />&nbsp;protections online now</div>
           </div>
         </div>
       </section>

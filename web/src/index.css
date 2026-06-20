@@ -374,3 +374,38 @@ svg{display:block}
   background:linear-gradient(90deg,var(--cyan),var(--green));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .comm-foot{margin-top:15px;padding-top:13px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px;
   font-size:13px;color:var(--green);font-weight:600}
+
+/* ============ Live page — full responsive (overrides earlier rules) ============ */
+.live-grid{grid-template-columns:1.7fr 1fr}
+.stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+@media (max-width:1024px){
+  .live-grid{grid-template-columns:1.35fr 1fr}
+  .news-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:860px){
+  .live-grid{grid-template-columns:1fr}
+  .news-grid{grid-template-columns:1fr}
+  .stats{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:560px){
+  .wrap{padding:0 16px}
+  .section{padding:40px 16px}
+  .stats{gap:10px;margin-top:16px}
+  .stat{padding:14px 12px}
+  .sv{font-size:23px}
+  .sl{font-size:11px}
+  .live-head h2,.section h2{font-size:25px;letter-spacing:-.4px}
+  .section-sub{font-size:14px}
+  .panel-card{padding:13px 14px;border-radius:13px}
+  .feed{max-height:420px}
+  .feed-row{grid-template-columns:20px 1fr auto;gap:8px;padding:8px 9px}
+  .feed-row .fr-tag,.feed-row .fr-hash{display:none}
+  .fr-threat{font-size:12.5px}
+  .fr-time{display:inline}
+  .comm-row{font-size:13px}
+  .comm-row b{font-size:15px}
+  .bar-row{grid-template-columns:74px 1fr 30px}
+}
+@media (max-width:380px){
+  .stats{grid-template-columns:1fr}
+}
