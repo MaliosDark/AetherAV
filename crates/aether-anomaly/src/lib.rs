@@ -118,16 +118,16 @@ impl AnomalyEngine {
                         ));
                     }
                 }
-                Action::RegistrySet { key, .. } if model::is_autostart(key) => {
-                    if !self.baseline.autostart_keys.contains(&key.to_lowercase())
-                        && seen.insert(format!("auto:{key}"))
-                    {
-                        verdicts.push(anomaly(
-                            "anomaly.new_autostart",
-                            0.7,
-                            format!("new autostart/persistence location: {key}"),
-                        ));
-                    }
+                Action::RegistrySet { key, .. }
+                    if model::is_autostart(key)
+                        && !self.baseline.autostart_keys.contains(&key.to_lowercase())
+                        && seen.insert(format!("auto:{key}")) =>
+                {
+                    verdicts.push(anomaly(
+                        "anomaly.new_autostart",
+                        0.7,
+                        format!("new autostart/persistence location: {key}"),
+                    ));
                 }
                 _ => {}
             }

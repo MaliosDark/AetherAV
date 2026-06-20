@@ -7,7 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+  # NOTE: warnings are denied in the `lint` job (clippy -D warnings) on Linux.
+  # We deliberately do NOT set RUSTFLAGS=-D warnings globally: cross-platform
+  # builds (macOS/Windows) legitimately leave Linux-only helpers unused, and
+  # failing the whole build on a platform dead-code warning is brittle.
 
 jobs:
   test:
@@ -18,7 +21,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
@@ -32,7 +35,7 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -46,7 +49,7 @@ jobs:
     name: sandbox (Unicorn emulation backend)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # The Unicorn Engine sys crate builds libunicorn via cmake.
@@ -59,7 +62,7 @@ jobs:
     name: bench smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Compile benches and run a single fast iteration to catch breakage.
