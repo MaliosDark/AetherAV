@@ -24,11 +24,17 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build
+      - name: Build (all platforms must compile)
         run: cargo build --workspace --all-targets
-      - name: Test
+      # The full unit-test suite runs on Linux. Several tests exercise Linux-only
+      # facilities (/proc cross-view, fanotify, Unix perms) and are environment-
+      # specific on macOS/Windows; those platforms verify compilation above, and
+      # the real release binaries are built + smoke-tested per-OS in release.yml.
+      - name: Test (full suite)
+        if: runner.os == 'Linux'
         run: cargo test --workspace
       - name: Test without YARA-X (constrained build)
+        if: runner.os == 'Linux'
         run: cargo test --workspace --no-default-features
 
   lint:
