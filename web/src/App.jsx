@@ -596,8 +596,24 @@ function useRoute() {
     return 'home'
   }
   const [route, setRoute] = useState(read())
+  const routeRef = useRef(route)
   useEffect(() => {
-    const onHash = () => { setRoute(read()); window.scrollTo(0, 0) }
+    const onHash = () => {
+      const h = window.location.hash
+      const next = read()
+      const pageChanged = routeRef.current !== next
+      routeRef.current = next
+      setRoute(next)
+      // Let the new view render, then either jump to an in-page section anchor
+      // (#engines, #features, …) or scroll to top only when the PAGE changed.
+      setTimeout(() => {
+        if (next === 'home' && h && h !== '#' && h !== '#top') {
+          const el = document.querySelector(h)
+          if (el) { el.scrollIntoView({ behavior: 'smooth' }); return }
+        }
+        if (pageChanged) window.scrollTo(0, 0)
+      }, 40)
+    }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
