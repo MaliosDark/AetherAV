@@ -409,3 +409,17 @@ svg{display:block}
 @media (max-width:380px){
   .stats{grid-template-columns:1fr}
 }
+
+/* ===== Live page fixes: number fit, taller feed, matched columns ===== */
+.sv{font-size:clamp(20px,2.7vw,30px);line-height:1.22;white-space:nowrap}
+.stat{min-width:0;padding:18px 14px}
+.comm-row b{line-height:1.25;white-space:nowrap}
+.live-grid{align-items:stretch}
+.feed{max-height:640px}
+.live-col{display:flex;flex-direction:column}
+.live-col .panel-card:last-child{display:flex;flex-direction:column;flex:1}
+.comm-foot{margin-top:auto}
+/* authoritative live-grid breakpoints (override earlier conflicting rules) */
+@media (min-width:1025px){ .live-grid{grid-template-columns:1.7fr 1fr} }
+@media (max-width:1024px) and (min-width:861px){ .live-grid{grid-template-columns:1.4fr 1fr} }
+@media (max-width:860px){ .live-grid{grid-template-columns:1fr} .feed{max-height:520px} }

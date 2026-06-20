@@ -753,8 +753,8 @@ function LivePage() {
           <span className={'live-badge' + (online ? '' : ' off')}>
             <span className="live-dot" />{online ? 'LIVE' : 'CONNECTING…'}
           </span>
-          <h2 style={{ margin: '12px 0 4px' }}>AetherAV Threat Intelligence</h2>
-          <p className="section-sub" style={{ margin: 0 }}>
+          <h2 style={{ margin: '12px 0 6px' }}>AetherAV Threat Intelligence</h2>
+          <p className="section-sub" style={{ margin: '0 auto', maxWidth: 600 }}>
             Real-time analysis from the community pipeline - anonymous submissions, scanned by all
             ten engines, with live verdicts.{online ? '' : ' Waiting for ' + API.replace(/^https?:\/\//, '') + '…'}
           </p>
