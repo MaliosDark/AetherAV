@@ -91,6 +91,11 @@ pub struct EngineConfig {
     pub llm_runner: String,
     /// Path to the GGUF model.
     pub llm_model: PathBuf,
+    /// Optional persistent llama.cpp server URL (e.g. `http://127.0.0.1:8080`).
+    /// When set, classifications are sent to the already-loaded server instead
+    /// of spawning a fresh process per artifact - far better on slow/HDD hosts.
+    #[serde(default)]
+    pub llm_server_url: String,
 }
 
 /// Behavior of a scan run.
@@ -144,6 +149,7 @@ impl Default for EngineConfig {
             llm: false,
             llm_runner: "llama-completion".to_string(),
             llm_model: PathBuf::from("assets/models/aegis-50m.gguf"),
+            llm_server_url: String::new(),
         }
     }
 }

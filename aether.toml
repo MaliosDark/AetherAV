@@ -2,10 +2,17 @@
 # Use:  ./target/debug/aether -c aether.toml scan <path>
 
 [engines]
-# Aegis-50M - our compact on-device classifier, fused as Engine 9
+# Aegis-50M - our compact on-device classifier, fused as Engine 9.
+# On weak hosts (1 core / <2 GB RAM) the LLM auto-disables so scans stay fast;
+# the other 9 engines keep protecting.
 llm = true
 llm_runner = "/home/nexland/.unsloth/llama.cpp/build_cli/bin/llama-completion"
 llm_model = "assets/models/aegis-50m.gguf"
+# RECOMMENDED on slow/HDD machines: run a persistent llama.cpp server so the
+# model loads ONCE (no per-scan re-init). Start it with
+#   llama-server -m assets/models/aegis-50m.gguf
+# then point AetherAV at it (CLI spawn is the fallback when this is empty):
+# llm_server_url = "http://127.0.0.1:8080"
 
 [update]
 # Always-current auto-update from our Ed25519-signed feed.

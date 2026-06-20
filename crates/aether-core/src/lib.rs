@@ -180,6 +180,7 @@ impl Scanner {
             enabled: config.engines.llm,
             runner: config.engines.llm_runner.clone(),
             model: config.engines.llm_model.clone(),
+            server_url: config.engines.llm_server_url.clone(),
             ..Default::default()
         });
         if llm.is_available() {
