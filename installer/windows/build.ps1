@@ -57,12 +57,15 @@ if (-not $makensis) {
   }
 }
 if (-not $makensis) { throw "makensis not found - is NSIS installed?" }
-if ($gui) {
-  & $makensis /DWITH_GUI "installer\windows\aetherav.nsi"
-} else {
-  & $makensis "installer\windows\aetherav.nsi"
-}
-if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
+# Run from the script's own dir: NSIS resolves File/bitmap paths against the
+# WORKING directory (Windows), so assets/ and payload/ must be relative to here.
+Push-Location "installer\windows"
+try {
+  if ($gui) { & $makensis /DWITH_GUI "aetherav.nsi" }
+  else      { & $makensis "aetherav.nsi" }
+  $nsisExit = $LASTEXITCODE
+} finally { Pop-Location }
+if ($nsisExit -ne 0) { throw "makensis failed (exit $nsisExit)" }
 
 $setup = "installer\windows\AetherAV-Setup.exe"
 Sign-File $setup
