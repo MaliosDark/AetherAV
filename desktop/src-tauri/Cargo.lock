@@ -19,6 +19,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-anomaly"
+version = "0.1.0"
+dependencies = [
+ "aether-behavior",
+ "aether-common",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "aether-behavior"
 version = "0.1.0"
 dependencies = [
@@ -72,6 +83,8 @@ dependencies = [
 name = "aether-desktop"
 version = "0.1.0"
 dependencies = [
+ "aether-anomaly",
+ "aether-behavior",
  "aether-common",
  "aether-config",
  "aether-core",
@@ -79,6 +92,7 @@ dependencies = [
  "aether-intel",
  "aether-quarantine",
  "aether-realtime",
+ "aether-sandbox",
  "aether-signatures",
  "aether-unpack",
  "serde",

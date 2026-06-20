@@ -32,6 +32,9 @@ aether-realtime = { path = "../../crates/aether-realtime" }
 aether-firewall = { path = "../../crates/aether-firewall" }
 aether-quarantine = { path = "../../crates/aether-quarantine" }
 aether-unpack = { path = "../../crates/aether-unpack" }
+aether-sandbox = { path = "../../crates/aether-sandbox" }
+aether-behavior = { path = "../../crates/aether-behavior" }
+aether-anomaly = { path = "../../crates/aether-anomaly" }
 
 # Real system metrics + in-app threat-intel downloads.
 sysinfo = "0.33"

@@ -51,6 +51,15 @@ struct Settings {
     /// URL of the Ed25519-signed feed for manual/auto signature updates.
     #[serde(default)]
     update_url: String,
+    /// Scheduled scan cadence: "off" | "hourly" | "daily" | "weekly".
+    #[serde(default)]
+    scan_schedule: String,
+    /// Folder the scheduled scan targets (empty -> the user's home dir).
+    #[serde(default)]
+    scan_schedule_path: String,
+    /// Auto-scan removable media (USB drives) as soon as they are mounted.
+    #[serde(default)]
+    usb_autoscan: bool,
 }
 
 fn default_true() -> bool {
@@ -85,6 +94,9 @@ impl Default for Settings {
             quarantine_dir: String::new(),
             auto_update_hours: 6,
             update_url: String::new(),
+            scan_schedule: "off".to_string(),
+            scan_schedule_path: String::new(),
+            usb_autoscan: false,
         }
     }
 }
@@ -177,6 +189,60 @@ impl AppState {
             PathBuf::from(dir)
         }
     }
+
+    /// Persistent scan-history log (newest appended last; capped at 500 rows).
+    fn history_path(&self) -> PathBuf {
+        self.assets.join("models/scan_history.json")
+    }
+
+    fn read_history(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.history_path())
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    fn append_history(&self, rec: Value) {
+        let mut arr = self.read_history();
+        arr.push(rec);
+        let len = arr.len();
+        if len > 500 {
+            arr.drain(0..len - 500);
+        }
+        let _ = std::fs::write(self.history_path(), serde_json::to_string(&arr).unwrap_or_default());
+    }
+}
+
+/// Scan a path, record the result in history, fire a notification, and emit a
+/// `scan-done` event. Shared by the scheduler and the USB auto-scan watcher.
+fn scan_and_record(app: &tauri::AppHandle, source: &str, path: &Path) {
+    let state = app.state::<AppState>();
+    let result = {
+        let g = state.scanner.lock().unwrap();
+        match g.as_ref() {
+            Some(s) => s.scan_path(path).ok(),
+            None => None,
+        }
+    };
+    let Some((reports, summary)) = result else { return };
+    *state.files_scanned.lock().unwrap() += summary.scanned;
+    let threats = summary.malicious + summary.suspicious;
+    *state.threats_blocked.lock().unwrap() += threats;
+    let rows: Vec<Value> = reports.iter().filter(|r| r.is_threat()).map(report_row).collect();
+    state.append_history(json!({
+        "ts": now_secs(), "source": source, "path": path.display().to_string(),
+        "scanned": summary.scanned, "malicious": summary.malicious,
+        "suspicious": summary.suspicious, "clean": summary.clean,
+        "ms": summary.elapsed.as_millis() as u64, "threats": rows,
+    }));
+    if threats > 0 {
+        notify(app, "⚠ Threats detected",
+               &format!("{} malicious · {} suspicious in {}", summary.malicious, summary.suspicious, path.display()));
+    } else {
+        notify(app, &format!("{source} scan - clean"),
+               &format!("{} files scanned, no threats.", summary.scanned));
+    }
+    let _ = app.emit("scan-done", json!({"source": source, "threats": threats, "scanned": summary.scanned}));
 }
 
 /// Worst-disposition string + best verdict for a report row.
@@ -242,6 +308,14 @@ fn fmt_clock(epoch_secs: u64) -> String {
 
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The current user's home directory (cross-platform), falling back to ".".
+fn dirs_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Snapshot of system metrics used by the status bar / live widgets.
@@ -522,6 +596,12 @@ fn scan_path_cmd(app: tauri::AppHandle, state: tauri::State<AppState>, path: Str
                 .filter(|r| r.is_threat())
                 .map(report_row)
                 .collect();
+            state.append_history(json!({
+                "ts": now_secs(), "source": "manual", "path": path,
+                "scanned": summary.scanned, "malicious": summary.malicious,
+                "suspicious": summary.suspicious, "clean": summary.clean,
+                "ms": summary.elapsed.as_millis() as u64, "threats": rows,
+            }));
             json!({
                 "summary": {"scanned": summary.scanned, "malicious": summary.malicious,
                             "suspicious": summary.suspicious, "clean": summary.clean,
@@ -1168,6 +1248,251 @@ fn stealer_arm(state: tauri::State<AppState>) -> Value {
     }
 }
 
+// ---- Sandbox / Behavior / Anomaly (wire the engine pages to real analysis) ----
+
+/// Statically emulate a file (shellcode/binary): anti-evasion + shellcode tells
+/// + exploit-staging indicators. Mirrors the CLI `emulate` / `exploitscan`.
+#[tauri::command]
+fn emulate_file(path: String) -> Value {
+    use aether_sandbox::{Bitness, Sandbox};
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => return json!({"error": format!("reading {path}: {e}")}),
+    };
+    let report = Sandbox::new().analyze(&data, Bitness::Bits64);
+    let verdicts: Vec<Value> = report
+        .verdicts
+        .iter()
+        .map(|v| {
+            json!({"level": v.level.to_string().to_lowercase(), "signature": v.signature,
+                   "detail": v.detail.clone().unwrap_or_default(), "mitre": v.mitre})
+        })
+        .collect();
+    let exploits: Vec<String> = aether_sandbox::exploit::scan_exploit(&data)
+        .iter()
+        .map(|h| h.describe())
+        .collect();
+    json!({
+        "bytes": data.len(),
+        "instructions": report.instructions,
+        "disposition": report.disposition().to_string().to_lowercase(),
+        "techniques": report.techniques(),
+        "verdicts": verdicts,
+        "exploits": exploits,
+    })
+}
+
+/// Analyze a behavioral event trace (JSON) for malicious activity. Mirrors `behavior`.
+#[tauri::command]
+fn behavior_analyze(path: String) -> Value {
+    let txt = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => return json!({"error": format!("reading {path}: {e}")}),
+    };
+    match aether_behavior::BehaviorEngine::new().analyze_json(&txt) {
+        Ok(report) => {
+            let verdicts: Vec<Value> = report
+                .verdicts
+                .iter()
+                .map(|v| {
+                    json!({"level": v.level.to_string().to_lowercase(), "signature": v.signature,
+                           "detail": v.detail.clone().unwrap_or_default(), "mitre": v.mitre})
+                })
+                .collect();
+            json!({"disposition": report.disposition().to_string().to_lowercase(),
+                   "techniques": report.techniques(), "verdicts": verdicts})
+        }
+        Err(e) => json!({"error": e}),
+    }
+}
+
+/// Online-learn the per-host anomaly baseline from a benign trace. Mirrors `learn`.
+#[tauri::command]
+fn anomaly_learn(state: tauri::State<AppState>, path: String) -> Value {
+    use aether_anomaly::{AnomalyEngine, Baseline};
+    let txt = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => return json!({"error": format!("reading {path}: {e}")}),
+    };
+    let events = match aether_behavior::Event::from_json(&txt) {
+        Ok(e) => e,
+        Err(e) => return json!({"error": e}),
+    };
+    let model = state.assets.join("models/anomaly_baseline.json");
+    let baseline = match Baseline::load_or_new(&model) {
+        Ok(b) => b,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+    let mut engine = AnomalyEngine::new(baseline);
+    engine.learn(&events);
+    let _ = engine.baseline().save(&model);
+    let b = engine.baseline();
+    json!({"ok": true, "trained": b.is_trained(),
+           "message": format!("Baseline updated · {} programs · {} spawns{}",
+               b.process_freq.len(), b.total_spawns,
+               if b.is_trained() {""} else {" (need ≥15 spawns to train)"})})
+}
+
+/// Score a trace against the learned baseline. Mirrors `anomaly`.
+#[tauri::command]
+fn anomaly_score(state: tauri::State<AppState>, path: String) -> Value {
+    use aether_anomaly::{AnomalyEngine, Baseline};
+    let txt = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => return json!({"error": format!("reading {path}: {e}")}),
+    };
+    let events = match aether_behavior::Event::from_json(&txt) {
+        Ok(e) => e,
+        Err(e) => return json!({"error": e}),
+    };
+    let model = state.assets.join("models/anomaly_baseline.json");
+    let baseline = match Baseline::load_or_new(&model) {
+        Ok(b) => b,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+    if !baseline.is_trained() {
+        return json!({"trained": false,
+                      "message": "Baseline not trained yet - learn from benign traces first."});
+    }
+    let anomalies = AnomalyEngine::new(baseline).score(&events);
+    let rows: Vec<Value> = anomalies
+        .iter()
+        .map(|v| {
+            json!({"level": v.level.to_string().to_lowercase(), "signature": v.signature,
+                   "detail": v.detail.clone().unwrap_or_default()})
+        })
+        .collect();
+    json!({"trained": true, "anomalies": rows})
+}
+
+// ---- Scan history, report export, 1-click quarantine, scheduling ----
+
+/// Quarantine a detected file straight from the scan results (1-click).
+#[tauri::command]
+fn quarantine_add(state: tauri::State<AppState>, path: String, threat: String) -> Value {
+    let t = if threat.is_empty() { "Manual.Quarantine".to_string() } else { threat };
+    match Vault::open(state.vault_path()).and_then(|mut v| v.quarantine_file(Path::new(&path), &t)) {
+        Ok(e) => json!({"ok": true, "message": format!("Quarantined -> vault id {}", e.id)}),
+        Err(e) => json!({"ok": false, "message": format!("Quarantine failed: {e}")}),
+    }
+}
+
+/// Return the scan history (newest first, capped) for the Reports page.
+#[tauri::command]
+fn scan_history(state: tauri::State<AppState>) -> Value {
+    let mut arr = state.read_history();
+    arr.reverse();
+    arr.truncate(200);
+    let totals = arr.iter().fold((0u64, 0u64, 0u64), |(s, m, su), r| {
+        (
+            s + r["scanned"].as_u64().unwrap_or(0),
+            m + r["malicious"].as_u64().unwrap_or(0),
+            su + r["suspicious"].as_u64().unwrap_or(0),
+        )
+    });
+    json!({"history": arr, "totals": {"scanned": totals.0, "malicious": totals.1, "suspicious": totals.2}})
+}
+
+/// Erase the scan history log.
+#[tauri::command]
+fn clear_history(state: tauri::State<AppState>) -> Value {
+    let _ = std::fs::write(state.history_path(), "[]");
+    json!({"ok": true, "message": "History cleared"})
+}
+
+fn history_csv(rows: &[Value]) -> String {
+    let mut out = String::from("timestamp,source,path,scanned,malicious,suspicious,clean,ms\n");
+    for r in rows {
+        out.push_str(&format!(
+            "{},{},\"{}\",{},{},{},{},{}\n",
+            r["ts"].as_u64().unwrap_or(0),
+            r["source"].as_str().unwrap_or(""),
+            r["path"].as_str().unwrap_or("").replace('"', "'"),
+            r["scanned"].as_u64().unwrap_or(0),
+            r["malicious"].as_u64().unwrap_or(0),
+            r["suspicious"].as_u64().unwrap_or(0),
+            r["clean"].as_u64().unwrap_or(0),
+            r["ms"].as_u64().unwrap_or(0),
+        ));
+    }
+    out
+}
+
+fn history_html(rows: &[Value]) -> String {
+    let mut body = String::new();
+    for r in rows {
+        let threats = r["threats"].as_array().map(|a| a.len()).unwrap_or(0);
+        body.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td style='text-align:right'>{}</td><td style='text-align:right;color:#ef5350'>{}</td><td style='text-align:right'>{}</td></tr>",
+            fmt_clock(r["ts"].as_u64().unwrap_or(0)),
+            r["source"].as_str().unwrap_or(""),
+            r["path"].as_str().unwrap_or(""),
+            r["scanned"].as_u64().unwrap_or(0),
+            r["malicious"].as_u64().unwrap_or(0) + r["suspicious"].as_u64().unwrap_or(0),
+            threats,
+        ));
+    }
+    format!(
+        "<!doctype html><html><head><meta charset='utf-8'><title>AetherAV Scan Report</title>\
+<style>body{{font-family:system-ui,sans-serif;background:#0b1418;color:#d6e6ec;padding:32px}}\
+h1{{color:#27d8ee}}table{{border-collapse:collapse;width:100%;margin-top:16px}}\
+th,td{{border-bottom:1px solid #1d3540;padding:8px 12px;font-size:13px;text-align:left}}\
+th{{color:#7fb4c4;text-transform:uppercase;font-size:11px}}</style></head><body>\
+<h1>&#128737; AetherAV Scan Report</h1><p>{} scans recorded · generated by AetherAV.</p>\
+<table><thead><tr><th>Time</th><th>Source</th><th>Path</th><th>Scanned</th><th>Threats</th><th>Items</th></tr></thead>\
+<tbody>{}</tbody></table><p style='margin-top:24px;color:#5d7d88'>Tip: print this page to PDF for a portable report.</p></body></html>",
+        rows.len(), body
+    )
+}
+
+/// Export the scan history as CSV / JSON / HTML via a native Save dialog.
+#[tauri::command]
+fn export_report(app: tauri::AppHandle, state: tauri::State<AppState>, format: String) -> Value {
+    use tauri_plugin_dialog::DialogExt;
+    let rows = state.read_history();
+    let (content, ext) = match format.as_str() {
+        "csv" => (history_csv(&rows), "csv"),
+        "html" => (history_html(&rows), "html"),
+        _ => (serde_json::to_string_pretty(&rows).unwrap_or_default(), "json"),
+    };
+    let Some(dest) = app
+        .dialog()
+        .file()
+        .set_file_name(format!("aetherav-report.{ext}"))
+        .blocking_save_file()
+    else {
+        return json!({"ok": false, "message": "Export cancelled"});
+    };
+    let path = dest.to_string();
+    match std::fs::write(&path, content) {
+        Ok(_) => json!({"ok": true, "message": format!("Report saved -> {path}")}),
+        Err(e) => json!({"ok": false, "message": format!("Save failed: {e}")}),
+    }
+}
+
+/// Persist the scheduled-scan + USB-auto-scan preferences from the GUI.
+#[tauri::command]
+fn set_schedule(state: tauri::State<AppState>, schedule: String, path: String, usb: bool) -> Value {
+    {
+        let mut s = state.settings.lock().unwrap();
+        s.scan_schedule = if schedule.is_empty() { "off".into() } else { schedule };
+        s.scan_schedule_path = path;
+        s.usb_autoscan = usb;
+        s.save(&state.assets);
+    }
+    json!({"ok": true, "message": "Schedule saved · applies immediately"})
+}
+
+/// Seconds between scheduled scans for a cadence keyword (0 = disabled).
+fn schedule_interval(kw: &str) -> u64 {
+    match kw {
+        "hourly" => 3600,
+        "daily" => 86_400,
+        "weekly" => 7 * 86_400,
+        _ => 0,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Bring the main window forward (from the tray or widget).
@@ -1294,6 +1619,65 @@ pub fn run() {
                 }
             });
 
+            // Scheduled scans: every minute, check the configured cadence and run
+            // a scan when one is due. Last-run time is persisted so the schedule
+            // survives restarts. Off by default (cadence "off").
+            let h3 = app.handle().clone();
+            std::thread::spawn(move || {
+                let stamp = h3.state::<AppState>().assets.join("models/last_scan.json");
+                loop {
+                    std::thread::sleep(Duration::from_secs(60));
+                    let st = h3.state::<AppState>();
+                    let (cadence, path) = {
+                        let s = st.settings.lock().unwrap();
+                        (s.scan_schedule.clone(), s.scan_schedule_path.clone())
+                    };
+                    let interval = schedule_interval(&cadence);
+                    if interval == 0 {
+                        continue;
+                    }
+                    let last: u64 = std::fs::read_to_string(&stamp)
+                        .ok()
+                        .and_then(|t| t.trim().parse().ok())
+                        .unwrap_or(0);
+                    if now_secs().saturating_sub(last) < interval {
+                        continue;
+                    }
+                    let target = if path.trim().is_empty() {
+                        dirs_home()
+                    } else {
+                        PathBuf::from(path)
+                    };
+                    let _ = std::fs::write(&stamp, now_secs().to_string());
+                    scan_and_record(&h3, "scheduled", &target);
+                }
+            });
+
+            // USB / removable-media auto-scan: poll mounted disks; when a new
+            // removable volume appears and the option is on, scan it immediately.
+            let h4 = app.handle().clone();
+            std::thread::spawn(move || {
+                use std::collections::HashSet;
+                let mut seen: HashSet<String> = HashSet::new();
+                let mut first = true;
+                loop {
+                    let on = h4.state::<AppState>().settings.lock().unwrap().usb_autoscan;
+                    let disks = Disks::new_with_refreshed_list();
+                    let mut current = HashSet::new();
+                    for d in disks.list().iter().filter(|d| d.is_removable()) {
+                        let mp = d.mount_point().display().to_string();
+                        current.insert(mp.clone());
+                        if on && !first && !seen.contains(&mp) {
+                            notify(&h4, "USB media detected", &format!("Auto-scanning {mp}…"));
+                            scan_and_record(&h4, "usb", Path::new(&mp));
+                        }
+                    }
+                    seen = current;
+                    first = false;
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+            });
+
             // System tray (OS widget): status tooltip + quick menu, on all OSes.
             // Non-fatal: headless / no-tray-host environments still launch the app.
             if let Err(e) = build_tray(app) {
@@ -1325,7 +1709,16 @@ pub fn run() {
             shields_status,
             firewall_apply,
             webprotect_apply,
-            stealer_arm
+            stealer_arm,
+            emulate_file,
+            behavior_analyze,
+            anomaly_learn,
+            anomaly_score,
+            quarantine_add,
+            scan_history,
+            clear_history,
+            export_report,
+            set_schedule
         ])
         .run(tauri::generate_context!())
         .expect("error while running AetherAV desktop");

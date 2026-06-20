@@ -337,33 +337,44 @@ const PAGES = {
       <div class="page-sub">Exact-match hash database (Bloom-filtered) + compiled YARA-X rules.</div></div>
       <button class="btn btn-primary inline" id="intelGo"><i data-ic="down"></i> Update Signatures</button></div>
     <div class="kpis" id="intelKpis"></div>`,
-  reports: ()=>{
-    const s=LAST.system||{}, st=LAST.stats||[];
-    return `<div class="page-head"><div class="page-title"><i data-ic="doc"></i>Reports</div></div>
-    <div class="kpis">${st.map(x=>`<div class="stat"><div class="sv">${x.v}</div><div class="sl">${x.l}</div></div>`).join('')}</div>
-    <div class="panel"><div class="panel-h">SESSION & SYSTEM</div><ul class="feature-list" style="margin-top:10px">
-      <li><i data-ic="check"></i>OS: <b>${s.os||'-'}</b></li>
-      <li><i data-ic="check"></i>CPU ${s.cpu||'-'} · RAM ${s.ram||'-'} · Disk ${s.disk||'-'} · Net ${s.net||'-'}</li>
-    </ul></div>`;
-  },
+  reports: ()=>`
+    <div class="page-head"><div><div class="page-title"><i data-ic="doc"></i>Reports</div>
+      <div class="page-sub">Every scan (manual, scheduled and USB) is logged locally. Export the history for your records.</div></div>
+      <div style="display:flex;gap:8px"><button class="btn inline" id="rpJson"><i data-ic="down"></i> JSON</button>
+        <button class="btn inline" id="rpCsv"><i data-ic="down"></i> CSV</button>
+        <button class="btn inline" id="rpHtml"><i data-ic="down"></i> HTML</button>
+        <button class="btn inline" id="rpClear">Clear</button></div></div>
+    <div class="kpis" id="rpKpis"></div>
+    <div class="panel"><div class="panel-h">SCAN HISTORY</div><div id="rpOut" style="margin-top:10px"><div class="empty">Loading…</div></div></div>`,
   behavior: ()=>`
     <div class="page-head"><div><div class="page-title"><i data-ic="share"></i>Behavior + Graph Engine</div>
       <div class="page-sub">Process/file/network graph with MITRE ATT&CK rules (injection, ransomware, LOLBin chains, C2, persistence).</div></div>
       <button class="btn btn-primary inline" id="rtGo"><i data-ic="activity"></i> Analyze Live Processes</button></div>
-    <div class="panel"><div class="panel-h">DETECTION CAPABILITIES</div>
-      <ul class="feature-list" style="margin-top:10px">
-        <li><i data-ic="check"></i>Process injection (T1055): RWX alloc + remote thread</li>
-        <li><i data-ic="check"></i>Ransomware (T1486/T1490): mass high-entropy writes + shadow-copy deletion</li>
-        <li><i data-ic="check"></i>Office->script LOLBin chains (T1566/T1059) via process ancestry</li>
-        <li><i data-ic="check"></i>C2 beaconing (T1071) &amp; persistence (T1547/T1053)</li>
-      </ul></div>
+    <div class="panel"><div class="panel-h">ANALYZE AN EVENT TRACE</div>
+      <div class="page-sub" style="margin:6px 0">Score a recorded process/file/network trace (JSON) against the MITRE rule set. Try the bundled samples in <code>assets/traces</code>.</div>
+      <div class="toolbar" style="margin-top:10px">
+        <input class="input" id="bhPath" placeholder="/path/to/trace.json"/>
+        <button class="btn inline" id="bhBrowse"><i data-ic="file"></i> Choose trace…</button>
+        <button class="btn btn-primary inline" id="bhGo"><i data-ic="bolt"></i> Analyze</button>
+      </div><div id="bhOut" style="margin-top:12px"></div></div>
     <div class="panel"><div class="panel-h">LIVE PROCESS TELEMETRY</div><div id="rtOut" style="margin-top:10px"><div class="empty">Press “Analyze Live Processes”.</div></div></div>`,
-  sandbox: ()=>capabilityPage('box','Dynamic Sandbox & Emulation',
-    'Static iced-x86 sweep with an optional Unicorn CPU-emulation backend.',
-    ['Anti-evasion: rdtsc timing, sidt/sgdt Red-Pill, VMware backdoor, anti-debug (T1497/T1622)','Shellcode: PEB walk, ROR-13 API-hash loop, GetPC stub (T1027)','Composite verdict when multiple techniques co-occur']),
-  anomaly: ()=>capabilityPage('wave','Anomaly Detection',
-    'Per-host behavioral baseline with lightweight online learning (Welford streaming stats).',
-    ['Flags never-seen programs, unusual process lineages & novel network destinations','Command-line length z-score outliers (encoded payloads)','New autostart/persistence locations','Cold-start safe: no alerts until the baseline is trained']),
+  sandbox: ()=>`
+    <div class="page-head"><div><div class="page-title"><i data-ic="box"></i>Dynamic Sandbox & Emulation</div>
+      <div class="page-sub">Static iced-x86 sweep + exploit-staging detection. Choose a file (shellcode, binary or document) to emulate and analyze for anti-evasion / shellcode tells.</div></div></div>
+    <div class="panel"><div class="toolbar">
+      <input class="input" id="sbPath" placeholder="/path/to/sample"/>
+      <button class="btn inline" id="sbBrowse"><i data-ic="file"></i> Choose file…</button>
+      <button class="btn btn-primary inline" id="sbGo"><i data-ic="bolt"></i> Emulate</button>
+    </div><div id="sbOut" style="margin-top:14px"><div class="empty">Choose a file and press Emulate.</div></div></div>`,
+  anomaly: ()=>`
+    <div class="page-head"><div><div class="page-title"><i data-ic="wave"></i>Anomaly Detection</div>
+      <div class="page-sub">Per-host behavioral baseline with online learning. Learn from benign event traces, then score new traces for never-seen programs, odd lineages and novel network destinations.</div></div></div>
+    <div class="panel"><div class="toolbar">
+      <input class="input" id="anPath" placeholder="/path/to/trace.json"/>
+      <button class="btn inline" id="anBrowse"><i data-ic="file"></i> Choose trace…</button>
+      <button class="btn inline" id="anLearn"><i data-ic="check"></i> Learn baseline</button>
+      <button class="btn btn-primary inline" id="anScore"><i data-ic="bolt"></i> Score</button>
+    </div><div id="anOut" style="margin-top:14px"><div class="empty">Pick an event-trace JSON (see assets/traces), then Learn or Score.</div></div></div>`,
   settings: ()=>`
     <div class="page-head"><div><div class="page-title"><i data-ic="gear"></i>Settings</div>
       <div class="page-sub">Toggle detection engines and paths. Changes hot-reload the engine - no restart.</div></div></div>
@@ -374,6 +385,15 @@ const PAGES = {
       <div class="setting"><span><b>Signed feed URL</b><br><span class="muted">Ed25519-signed; verified + rollback-protected before applying</span></span>
         <span style="display:flex;gap:8px;flex:1;max-width:480px"><input class="input" id="updUrl" placeholder="https://feeds.example.com/aether.json"/><button class="btn inline" id="updSaveUrl">Save</button></span></div>
       <div style="margin-top:12px"><button class="btn btn-primary inline" id="updNow"><i data-ic="down"></i> Update Now</button></div></div>
+    <div class="panel"><div class="panel-h">SCHEDULED & AUTOMATIC SCANS</div>
+      <div class="setting"><span><b>Scheduled scan</b><br><span class="muted">Run a full scan automatically on a cadence</span></span>
+        <select class="input" id="schCadence" style="max-width:170px">
+          <option value="off">Off</option><option value="hourly">Hourly</option>
+          <option value="daily">Daily</option><option value="weekly">Weekly</option></select></div>
+      <div class="setting"><span><b>Scan folder</b><br><span class="muted">Blank = your home directory</span></span>
+        <span style="display:flex;gap:8px;flex:1;max-width:420px"><input class="input" id="schPath" placeholder="(home directory)"/><button class="btn inline" id="schBrowse">Browse…</button></span></div>
+      <label class="setting"><input type="checkbox" id="schUsb"/><span><b>Auto-scan USB / removable media</b><br><span class="muted">Scan drives automatically the moment they are plugged in</span></span></label>
+      <div style="margin-top:12px"><button class="btn btn-primary inline" id="schSave"><i data-ic="check"></i> Save schedule</button></div></div>
     <div class="panel"><div class="panel-h">ABOUT</div><ul class="feature-list" style="margin-top:10px">
       <li><i data-ic="check"></i>Local-first · everything runs offline; cloud intel is opt-in</li>
       <li><i data-ic="check"></i>AetherAV desktop v2026.1.0 · Tauri v2 · cross-platform</li>
@@ -400,8 +420,9 @@ function bindPage(name, host){
     const go=async(p)=>{ const out=host.querySelector('#scanOut'); out.innerHTML='<div class="scanning"><span class="dot"></span> Scanning…</div>';
       const r=await invoke('scan_path_cmd',{path:p}); if(!r){out.innerHTML='<div class="empty">Run inside the app to scan.</div>';return;}
       if(r.error){out.innerHTML=`<div class="empty">${r.error}</div>`;return;}
-      const rows=r.threats.map(t=>`<tr><td class="mono">${t.path}</td><td><span class="tag ${t.risk}">${cap(t.risk)}</span></td><td>${t.signature}</td><td>${t.detail||''}</td></tr>`).join('');
-      out.innerHTML=`<div class="page-sub" style="margin-bottom:10px">Scanned <b>${r.summary.scanned}</b> · malicious <b style="color:var(--red)">${r.summary.malicious}</b> · suspicious <b style="color:var(--amber)">${r.summary.suspicious}</b> · ${r.summary.ms} ms</div>`+threatTable(rows,['Path','Risk','Signature','Detail']); };
+      const rows=r.threats.map(t=>`<tr><td class="mono">${t.path}</td><td><span class="tag ${t.risk}">${cap(t.risk)}</span></td><td>${t.signature}</td><td>${t.detail||''}</td><td><button class="rowbtn danger" data-q="${encodeURIComponent(t.path)}" data-sig="${encodeURIComponent(t.signature||'')}">Quarantine</button></td></tr>`).join('');
+      out.innerHTML=`<div class="page-sub" style="margin-bottom:10px">Scanned <b>${r.summary.scanned}</b> · malicious <b style="color:var(--red)">${r.summary.malicious}</b> · suspicious <b style="color:var(--amber)">${r.summary.suspicious}</b> · ${r.summary.ms} ms</div>`+threatTable(rows,['Path','Risk','Signature','Detail','Action']);
+      out.querySelectorAll('[data-q]').forEach(b=>b.onclick=async()=>{ b.disabled=true; const r2=await invoke('quarantine_add',{path:decodeURIComponent(b.dataset.q),threat:decodeURIComponent(b.dataset.sig)}); if(r2&&r2.message) toast(r2.message, r2.ok?'success':'alert'); if(r2&&r2.ok){ b.textContent='Quarantined'; } else { b.disabled=false; } }); };
     host.querySelector('#scanGo').onclick=()=>go(host.querySelector('#scanPath').value||'.');
     host.querySelector('#scanBrowse').onclick=async()=>{
       const p=await invoke('pick_folder');
@@ -434,7 +455,17 @@ function bindPage(name, host){
         refresh();
       };
       const uu=host.querySelector('#updUrl'); if(uu) uu.value=s.update_url||'';
+      // Scheduled / USB auto-scan preferences.
+      const sc=host.querySelector('#schCadence'); if(sc) sc.value=s.scan_schedule||'off';
+      const sp=host.querySelector('#schPath'); if(sp) sp.value=s.scan_schedule_path||'';
+      const sus=host.querySelector('#schUsb'); if(sus) sus.checked=!!s.usb_autoscan;
     });
+    const schB=host.querySelector('#schBrowse'); if(schB) schB.onclick=async()=>{const p=await invoke('pick_folder'); if(p) host.querySelector('#schPath').value=p;};
+    const schS=host.querySelector('#schSave'); if(schS) schS.onclick=async()=>{
+      const r=await invoke('set_schedule',{schedule:host.querySelector('#schCadence').value,
+        path:host.querySelector('#schPath').value, usb:host.querySelector('#schUsb').checked});
+      if(r&&r.message) toast(r.message,'success');
+    };
     // Signature-updates panel (manual "Update Now" + last-update status).
     const renderUpd=async()=>{
       const el=host.querySelector('#updStatus'); if(!el) return;
@@ -536,6 +567,62 @@ function bindPage(name, host){
       out.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await invoke('quarantine_remove',{id:b.dataset.del});toast('Deleted');load();});
       out.querySelectorAll('[data-rest]').forEach(b=>b.onclick=async()=>{const r2=await invoke('quarantine_restore',{id:b.dataset.rest,dest:'/tmp/restored_'+b.dataset.rest.slice(0,8)});if(r2&&r2.message)toast(r2.message);}); };
     host.querySelector('#qReload').onclick=load; load();
+  }
+  if(name==='sandbox'){
+    const go=async(p)=>{ const out=host.querySelector('#sbOut'); if(!p){toast('Choose a file first');return;}
+      out.innerHTML='<div class="scanning"><span class="dot"></span> Emulating…</div>';
+      const r=await invoke('emulate_file',{path:p}); if(!r){out.innerHTML='<div class="empty">Run inside the app.</div>';return;}
+      if(r.error){out.innerHTML=`<div class="empty">${r.error}</div>`;return;}
+      const vr=(r.verdicts||[]).map(v=>`<tr><td><span class="tag ${v.level}">${cap(v.level)}</span></td><td>${v.signature}</td><td>${v.detail||''}</td><td>${(v.mitre||[]).join(', ')}</td></tr>`).join('');
+      const ex=(r.exploits||[]).map(e=>`<li><i data-ic="alert"></i>${e}</li>`).join('');
+      out.innerHTML=`<div class="page-sub" style="margin-bottom:10px">Disposition <span class="tag ${r.disposition}">${cap(r.disposition)}</span> · ${r.bytes} bytes · ${r.instructions} instructions · MITRE ${(r.techniques||[]).join(', ')||'-'}</div>`
+        + (vr?threatTable(vr,['Severity','Signature','Detail','MITRE']):'<div class="empty">No anti-evasion or shellcode techniques detected ✓</div>')
+        + (ex?`<div class="panel" style="margin-top:12px"><div class="panel-h">EXPLOIT STAGING</div><ul class="feature-list" style="margin-top:10px">${ex}</ul></div>`:'');
+      paintIcons(out); };
+    host.querySelector('#sbGo').onclick=()=>go(host.querySelector('#sbPath').value);
+    host.querySelector('#sbBrowse').onclick=async()=>{const p=await invoke('pick_file'); if(p) host.querySelector('#sbPath').value=p;};
+  }
+  if(name==='anomaly'){
+    const path=()=>host.querySelector('#anPath').value;
+    host.querySelector('#anBrowse').onclick=async()=>{const p=await invoke('pick_file'); if(p) host.querySelector('#anPath').value=p;};
+    host.querySelector('#anLearn').onclick=async()=>{ const out=host.querySelector('#anOut'); if(!path()){toast('Choose a trace first');return;}
+      out.innerHTML='<div class="scanning"><span class="dot"></span> Learning baseline…</div>';
+      const r=await invoke('anomaly_learn',{path:path()}); if(!r){out.innerHTML='<div class="empty">Run inside the app.</div>';return;}
+      if(r.error){out.innerHTML=`<div class="empty">${r.error}</div>`;return;}
+      out.innerHTML=`<div class="page-sub">${r.message}</div>`; toast(r.message, r.trained?'success':'info'); };
+    host.querySelector('#anScore').onclick=async()=>{ const out=host.querySelector('#anOut'); if(!path()){toast('Choose a trace first');return;}
+      out.innerHTML='<div class="scanning"><span class="dot"></span> Scoring against baseline…</div>';
+      const r=await invoke('anomaly_score',{path:path()}); if(!r){out.innerHTML='<div class="empty">Run inside the app.</div>';return;}
+      if(r.error){out.innerHTML=`<div class="empty">${r.error}</div>`;return;}
+      if(!r.trained){out.innerHTML=`<div class="empty">${r.message}</div>`;return;}
+      const rows=(r.anomalies||[]).map(v=>`<tr><td><span class="tag ${v.level}">${cap(v.level)}</span></td><td>${v.signature}</td><td>${v.detail||''}</td></tr>`).join('');
+      out.innerHTML=rows?threatTable(rows,['Severity','Signature','Detail']):'<div class="empty">No anomalies relative to the learned baseline ✓</div>'; };
+  }
+  if(name==='behavior'){
+    host.querySelector('#bhBrowse').onclick=async()=>{const p=await invoke('pick_file'); if(p) host.querySelector('#bhPath').value=p;};
+    host.querySelector('#bhGo').onclick=async()=>{ const out=host.querySelector('#bhOut'); const p=host.querySelector('#bhPath').value; if(!p){toast('Choose a trace first');return;}
+      out.innerHTML='<div class="scanning"><span class="dot"></span> Analyzing trace…</div>';
+      const r=await invoke('behavior_analyze',{path:p}); if(!r){out.innerHTML='<div class="empty">Run inside the app.</div>';return;}
+      if(r.error){out.innerHTML=`<div class="empty">${r.error}</div>`;return;}
+      const rows=(r.verdicts||[]).map(v=>`<tr><td><span class="tag ${v.level}">${cap(v.level)}</span></td><td>${v.signature}</td><td>${v.detail||''}</td><td>${(v.mitre||[]).join(', ')}</td></tr>`).join('');
+      out.innerHTML=`<div class="page-sub" style="margin:8px 0">Disposition <span class="tag ${r.disposition}">${cap(r.disposition)}</span> · MITRE ${(r.techniques||[]).join(', ')||'-'}</div>`
+        +(rows?threatTable(rows,['Severity','Signature','Detail','MITRE']):'<div class="empty">No malicious behavior detected ✓</div>'); };
+  }
+  if(name==='reports'){
+    const load=async()=>{ const out=host.querySelector('#rpOut'), k=host.querySelector('#rpKpis');
+      const r=await invoke('scan_history'); if(!r){out.innerHTML='<div class="empty">Run inside the app.</div>';return;}
+      const h=r.history||[], t=r.totals||{};
+      if(k) k.innerHTML=[['Scans',h.length],['Files Scanned',(t.scanned||0).toLocaleString()],['Malicious',t.malicious||0],['Suspicious',t.suspicious||0]]
+        .map(([l,v])=>`<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div></div>`).join('');
+      const rows=h.map(x=>{const thr=(x.malicious||0)+(x.suspicious||0); let when='-'; try{when=new Date((x.ts||0)*1000).toLocaleString();}catch(_){}
+        return `<tr><td>${when}</td><td>${x.source||''}</td><td class="mono">${x.path||''}</td><td>${x.scanned||0}</td><td><span class="tag ${thr>0?'malicious':'clean'}">${thr}</span></td><td>${x.ms||0} ms</td></tr>`;}).join('');
+      out.innerHTML=rows?threatTable(rows,['Time','Source','Path','Scanned','Threats','Duration']):'<div class="empty">No scans recorded yet - run a scan from Scan Center.</div>'; };
+    const exp=async(fmt)=>{ if(!TAURI){toast('Run inside the app to export');return;} const r=await invoke('export_report',{format:fmt}); if(r&&r.message) toast(r.message, r.ok?'success':'alert'); };
+    host.querySelector('#rpJson').onclick=()=>exp('json');
+    host.querySelector('#rpCsv').onclick=()=>exp('csv');
+    host.querySelector('#rpHtml').onclick=()=>exp('html');
+    host.querySelector('#rpClear').onclick=async()=>{const r=await invoke('clear_history'); if(r&&r.message)toast(r.message); load();};
+    load();
   }
 }
 function setPage(name){
