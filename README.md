@@ -42,7 +42,7 @@ from cryptography and behavior analysis, not from hiding its code.
 | 🕵️ **Anti-stealth** | Catches fileless code, hidden (rootkit) processes, and ransomware in the act. |
 | 💰 **Anti-theft** | Wallet/credential decoys, in-memory key-scraping detection, and a clipboard hijack guard. |
 | 🧱 **Network defense** | A threat-intel firewall and private web/phishing blocking, driven from your OS's own firewall. |
-| 📦 **Real installers** | Premium signed installers for Windows, macOS and Linux - no bloatware, no upsells. |
+| 📦 **Real installers** | Native installers for Windows, macOS and Linux (x86_64 + ARM) - no bloatware, no upsells, hash-verifiable. |
 
 > **vs ClamAV:** AetherAV adds an on-device LLM, behavioral + anti-rootkit +
 > anti-ransomware engines, and cryptographically signed updates - things the
@@ -207,18 +207,51 @@ By default **nothing leaves your machine**. See [server/README.md](server/README
 
 ## 📦 Install
 
-Premium, **signed** installers for every OS - with a license step, component
-selection, and real-time protection set up for you. No bloatware, no upsells.
+Real installers for **every OS and CPU architecture** - with a license step,
+component selection, and real-time protection set up for you. No bloatware, no
+upsells. Grab the one for your system from the [latest release](https://github.com/MaliosDark/AetherAV/releases/latest).
 
-| OS | Installer | Real-time |
-|----|-----------|-----------|
-| **Windows** | `AetherAV-Setup.exe` wizard (license · components · PATH · shortcuts · context menu) | on-access watcher auto-started (kernel minifilter scaffolded) |
-| **macOS** | signed `.pkg` wizard, or a drag-to-Applications `.dmg` (universal arm64 + x86_64) | LaunchDaemon |
-| **Linux** | `.deb` package, or the `install.sh` wizard | systemd service (fanotify) + hourly signed updates |
+| OS | Installer(s) | Architectures | Real-time |
+|----|--------------|---------------|-----------|
+| **Windows** | `AetherAV-Setup-*.exe` wizard (license · components · PATH · shortcuts · context menu) | x86_64 · arm64 | on-access watcher auto-started (kernel minifilter scaffolded) |
+| **macOS** | `.pkg` wizard, or a drag-to-Applications `.dmg` | universal (Intel + Apple Silicon) | LaunchDaemon |
+| **Linux** | `.deb` package, or the `install.sh` wizard / `.tar.gz` | x86_64 · aarch64 | systemd service (fanotify) + hourly signed updates |
 
-Build them locally: `installer/windows/build.ps1` · `installer/macos/build-pkg.sh`
-· `installer/linux/build-deb.sh` (or `installer/linux/install.sh`). A tagged
-release builds and signs all three via GitHub Actions - see
+### ⚠️ Read this before installing - it's unsigned *on purpose*
+
+AetherAV is **not** signed with a paid OS code-signing certificate. That's a
+deliberate choice, not a shortcut. A paid certificate only proves *"someone paid
+a Certificate Authority and verified their identity"* - it says **nothing** about
+whether the code is safe, and it can't be audited. Instead, AetherAV gives you a
+**stronger, free trust path**: **reproducible builds + an Ed25519-signed
+`SHA256SUMS`**. You (or anyone) can prove the binary came from this exact source -
+something a paid-signed black box can't offer. See [docs/VERIFY.md](docs/VERIFY.md).
+
+The only cost of skipping the paid cert is that **your OS will show a warning**
+and installation **needs administrator / root** (it installs a real-time security
+service - any AV does). Here's exactly how to proceed on each system:
+
+- **🪟 Windows** - double-click `AetherAV-Setup-*.exe`. SmartScreen may say
+  *"Windows protected your PC"* → click **More info → Run anyway**. Approve the
+  **UAC / "Run as administrator"** prompt (needed to install the real-time service).
+- **🍎 macOS** - the `.pkg`/`.dmg` is from an *"unidentified developer"*.
+  **Right-click the file → Open → Open** (don't double-click), or run
+  `xattr -dr com.apple.quarantine <file>`. Installing the system service asks for
+  your password.
+- **🐧 Linux** - install and real-time protection need **`sudo`**:
+  `sudo apt install ./aetherav_*_*.deb` (or `sudo ./install.sh`). The CLI gets
+  the capabilities it needs for fanotify/firewall; full on-access still uses `sudo`.
+
+> **Always verify what you downloaded** (takes 5 seconds and beats any cert):
+> ```bash
+> sha256sum -c SHA256SUMS          # bytes match the published hashes
+> aether verifyfile SHA256SUMS     # the hash list is Ed25519-signed by us -> ✓ TRUSTED
+> ```
+
+Prefer to build it yourself? Every installer is reproducible from source:
+`installer/windows/build.ps1` · `installer/macos/build-pkg.sh` ·
+`installer/linux/build-deb.sh` (or `installer/linux/install.sh`). A tagged release
+builds all of them for every architecture via GitHub Actions - see
 [docs/RELEASE.md](docs/RELEASE.md).
 
 ---
@@ -348,14 +381,15 @@ Read the full threat model and disclosure policy in [SECURITY.md](SECURITY.md).
 protection (3 OS)** · **anti-stealer / anti-clipper / memory key-scraping** ·
 **anti-exploit** · **Authenticode publisher detection** · signed feed + model
 updates · anonymous submission pipeline · desktop GUI with **system tray +
-widget** · **premium signed installers (Windows / macOS / Linux) + CI** ·
+widget** · **native installers for every OS + CPU arch (Windows / macOS / Linux,
+x86_64 + ARM) + CI** · **Ed25519-verifiable releases** ·
 **VirusTotal-contributor package** · marketing website (`web/`) · reproducible
 builds.
 
-**Next:** purchase OS code-signing certs · ship the Windows kernel minifilter
-(needs signed driver) + macOS EndpointSecurity · deploy the public feed server ·
-pursue independent lab certification (VirusTotal -> AV-Comparatives -> AV-TEST;
-see [docs/CERTIFICATION.md](docs/CERTIFICATION.md)).
+**Next:** ship the Windows kernel minifilter + macOS EndpointSecurity · deploy
+the public feed server · grow detection content. We intentionally **skip paid OS
+code-signing** - trust comes from reproducible builds + Ed25519-signed releases,
+not from a Certificate Authority (see [docs/VERIFY.md](docs/VERIFY.md)).
 
 ## 📜 License
 
