@@ -61,3 +61,5 @@ assets/keys/feed_private.key
 *.pfx
 *.p12
 .jwt_secret
+.client_key
+.server_env

@@ -403,9 +403,8 @@ const PAGES = {
     <div class="panel"><div class="panel-h">DETECTION ENGINES</div>
       <div id="settingsForm" style="margin-top:12px"><div class="empty">Loading settings…</div></div></div>
     <div class="panel"><div class="panel-h">SIGNATURE UPDATES</div>
+      <div class="setting"><span><b>Official signature feed</b><br><span class="muted">Pulled from the AetherAV server over an authenticated channel, Ed25519-verified and rollback-protected before applying.</span></span></div>
       <div id="updStatus" class="page-sub" style="margin:10px 0">Checking…</div>
-      <div class="setting"><span><b>Signed feed URL</b><br><span class="muted">Ed25519-signed; verified + rollback-protected before applying</span></span>
-        <span style="display:flex;gap:8px;flex:1;max-width:480px"><input class="input" id="updUrl" placeholder="https://feeds.example.com/aether.json"/><button class="btn inline" id="updSaveUrl">Save</button></span></div>
       <div style="margin-top:12px"><button class="btn btn-primary inline" id="updNow"><i data-ic="down"></i> Update Now</button></div></div>
     <div class="panel"><div class="panel-h">SCHEDULED & AUTOMATIC SCANS</div>
       <div class="setting"><span><b>Scheduled scan</b><br><span class="muted">Run a full scan automatically on a cadence</span></span>
@@ -495,9 +494,7 @@ function bindPage(name, host){
       const st=await invoke('update_status');
       if(!st){el.textContent='Run inside the app.';return;}
       const last = st.last_update ? new Date(st.last_update*1000).toLocaleString() : 'never';
-      const url = st.url_set ? '<span style="color:var(--green)">URL set</span>'
-                            : '<span style="color:var(--amber)">no URL configured</span>';
-      el.innerHTML = `Last update: <b>${last}</b> &nbsp;·&nbsp; feed version <b>${st.version||0}</b> &nbsp;·&nbsp; ${url}`;
+      el.innerHTML = `Last update: <b>${last}</b> &nbsp;·&nbsp; feed version <b>${st.version||0}</b> &nbsp;·&nbsp; <span style="color:var(--green)">official server ●</span>`;
     };
     const su=host.querySelector('#updSaveUrl'); if(su) su.onclick=async()=>{
       const url=host.querySelector('#updUrl').value;

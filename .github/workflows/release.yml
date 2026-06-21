@@ -77,6 +77,8 @@ jobs:
         id: tauri
         continue-on-error: true
         working-directory: desktop/src-tauri
+        env:
+          AETHER_CLIENT_KEY: ${{ secrets.AETHER_CLIENT_KEY }}
         run: |
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build
@@ -116,6 +118,7 @@ jobs:
         env:
           WIN_CERT_PFX: ${{ secrets.WIN_CERT_PFX_PATH }}
           WIN_CERT_PASS: ${{ secrets.WIN_CERT_PASS }}
+          AETHER_CLIENT_KEY: ${{ secrets.AETHER_CLIENT_KEY }}
         run: |
           $ver = "$env:GITHUB_REF_NAME" -replace '^v',''
           if (-not $ver) { $ver = "2026.1.0" }
