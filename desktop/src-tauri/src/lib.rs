@@ -225,6 +225,9 @@ fn scan_and_record(app: &tauri::AppHandle, source: &str, path: &Path) {
         }
     };
     let Some((reports, summary)) = result else { return };
+    // Stamp the real "last full scan" time so the dashboard shows it (manual,
+    // scheduled and USB scans all count - not just the scheduler).
+    let _ = std::fs::write(state.assets.join("models/last_scan.json"), now_secs().to_string());
     *state.files_scanned.lock().unwrap() += summary.scanned;
     let threats = summary.malicious + summary.suspicious;
     *state.threats_blocked.lock().unwrap() += threats;
@@ -310,6 +313,32 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// Read a plain unix-epoch stamp file; 0 when missing/unparseable.
+fn read_stamp(path: &Path) -> u64 {
+    std::fs::read_to_string(path).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)
+}
+
+/// Compact human duration: "2h 14m", "3d 4h", "5m", or "just now".
+fn fmt_dur(secs: u64) -> String {
+    let (h, m) = (secs / 3600, (secs % 3600) / 60);
+    if h >= 24 {
+        format!("{}d {}h", h / 24, h % 24)
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else if m > 0 {
+        format!("{m}m")
+    } else {
+        "just now".to_string()
+    }
+}
+
+/// The app version, sourced from the build (matches the release tag when the CI
+/// injects it). Lets the UI display the real version instead of a hardcoded one.
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// The current user's home directory (cross-platform), falling back to ".".
 fn dirs_home() -> PathBuf {
     std::env::var_os("HOME")
@@ -379,6 +408,16 @@ fn dashboard_data(state: tauri::State<AppState>) -> Value {
     let net_conns = conns.len() as u64;
     let net_flagged = conns.iter().filter(|c| c.flagged().is_some()).count() as u64;
 
+    // Real "last full scan" + "definitions age" from the persisted stamps.
+    let last_scan = {
+        let s = read_stamp(&state.assets.join("models/last_scan.json"));
+        if s == 0 { "Never".to_string() } else { format!("{} ago", fmt_dur(now_secs().saturating_sub(s))) }
+    };
+    let defs_age = {
+        let u = read_stamp(&state.assets.join("models/last_update.json"));
+        if u == 0 { "—".to_string() } else { fmt_dur(now_secs().saturating_sub(u)) }
+    };
+
     // Live process activity -> "recent detections" + behavior graph.
     let (detections, graph) = process_activity(&state);
     let chart = {
@@ -418,7 +457,9 @@ fn dashboard_data(state: tauri::State<AppState>) -> Value {
       ],
       "system": {"os": metrics["os"], "cpu": metrics["cpu"], "ram": metrics["ram"],
                  "disk": metrics["disk"], "net": metrics["net"]},
-      "live": {"processes": procs, "connections": net_conns, "flagged_ports": net_flagged, "aegis": llm_loaded}
+      "live": {"processes": procs, "connections": net_conns, "flagged_ports": net_flagged, "aegis": llm_loaded},
+      "last_scan": last_scan,
+      "defs_age": defs_age
     })
 }
 
@@ -1687,6 +1728,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             dashboard_data,
+            app_version,
             app_ready,
             run_action,
             update_intel,

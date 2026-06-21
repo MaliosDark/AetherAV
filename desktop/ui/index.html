@@ -42,7 +42,7 @@
         <img class="brand-emblem-img" src="aetherav.png" alt="AetherAV logo" />
         <img class="brand-wordmark" src="aethertext.png" alt="AetherAV" />
         <div class="brand-sub">Engine-First. Local-First.<br/>Private. Offline. Powerful.</div>
-        <div class="brand-ver">v2026.1.0</div>
+        <div class="brand-ver" id="brandVer">v2026.1.0</div>
       </div>
       <nav class="nav">
         <a class="nav-item active" data-page="dashboard"><i data-ic="grid"></i><span>Dashboard</span></a>
@@ -64,7 +64,7 @@
         <div class="es-title">Protection Engine</div>
         <div class="es-run"><span class="dot"></span> Running</div>
         <div class="es-label">Last Full Scan</div>
-        <div class="es-val">2h 14m ago</div>
+        <div class="es-val" id="lastScan">—</div>
       </div>
     </aside>
 
@@ -82,7 +82,7 @@
               <li><span>Behavior Monitoring</span><b class="ok">ON</b></li>
               <li><span>Auto Updates</span><b class="ok">ON</b></li>
               <li><span>Offline Mode</span><b class="cy">READY</b></li>
-              <li><span>Definitions Age</span><b>2h 14m</b></li>
+              <li><span>Definitions Age</span><b id="defsAge">—</b></li>
             </ul>
           </div>
           <div class="protected-emblem">

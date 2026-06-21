@@ -35,6 +35,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Version from tag
         run: echo "VER=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Sync app/CLI version to tag
+        run: bash tools/set-version.sh "$VER"
       - name: Build engine
         run: cargo build --release -p aether-cli
       - name: Build .deb
@@ -62,6 +64,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Version from tag
         run: echo "VER=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Sync app/CLI version to tag
+        run: bash tools/set-version.sh "$VER"
       - name: Build + package the .pkg wizard (universal; sign/notarize if identity set)
         env:
           MAC_INSTALLER_IDENTITY: ${{ secrets.MAC_INSTALLER_IDENTITY }}
@@ -104,6 +108,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install NSIS
         run: choco install nsis -y --no-progress
+      - name: Sync app/CLI version to tag
+        shell: bash
+        run: bash tools/set-version.sh "${GITHUB_REF_NAME#v}"
       - name: Build + package (+ sign if cert provided)
         shell: pwsh
         env:

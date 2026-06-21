@@ -220,6 +220,9 @@ function renderAll(d){
   renderStats(d.stats); renderModules(d.modules); renderDetections(d.detections);
   renderGraph(d.graph); renderMitre(d.mitre); renderChart(d.chart);
   renderFeed(d.feed); renderSystem(d.system); renderSystemHealth(d); paintIcons();
+  // Real "last full scan" + "definitions age" from the engine (no more fakes).
+  const ls=document.getElementById('lastScan'); if(ls&&d.last_scan) ls.textContent=d.last_scan;
+  const da=document.getElementById('defsAge'); if(da&&d.defs_age) da.textContent=d.defs_age;
   // Live network summary in its own status-bar element (so the 2s metrics
   // tick, which rewrites the system stats, doesn't clobber it).
   if(d.live){
@@ -396,7 +399,7 @@ const PAGES = {
       <div style="margin-top:12px"><button class="btn btn-primary inline" id="schSave"><i data-ic="check"></i> Save schedule</button></div></div>
     <div class="panel"><div class="panel-h">ABOUT</div><ul class="feature-list" style="margin-top:10px">
       <li><i data-ic="check"></i>Local-first · everything runs offline; cloud intel is opt-in</li>
-      <li><i data-ic="check"></i>AetherAV desktop v2026.1.0 · Tauri v2 · cross-platform</li>
+      <li><i data-ic="check"></i>AetherAV desktop ${window.__APPVER||'v2026.1.0'} · Tauri v2 · cross-platform</li>
     </ul></div>`,
 };
 function capabilityPage(ic,title,sub,items){
@@ -636,6 +639,10 @@ function setPage(name){
 }
 
 async function boot(){
+  // Show the real app version (matches the release tag when CI injects it).
+  const ver = await invoke('app_version');
+  if(ver){ const bv=document.getElementById('brandVer'); if(bv) bv.textContent='v'+ver; window.__APPVER='v'+ver; }
+
   await refresh();
 
   // Collapsible left menu.
