@@ -93,7 +93,10 @@ impl Default for Settings {
             llm_runner: String::new(),
             quarantine_dir: String::new(),
             auto_update_hours: 6,
-            update_url: String::new(),
+            // Default to the official signed-feed server (same host that serves the
+            // live site data). Users can override this in Settings. The feed is
+            // Ed25519-signed, so pulling it is safe even over a plain fetch.
+            update_url: "https://aether-central.aswss.com/feed".to_string(),
             scan_schedule: "off".to_string(),
             scan_schedule_path: String::new(),
             usb_autoscan: false,
