@@ -60,3 +60,4 @@ assets/models/*.version
 assets/keys/feed_private.key
 *.pfx
 *.p12
+.jwt_secret
