@@ -91,7 +91,12 @@ pub fn upx_unpack(data: &[u8]) -> Option<Vec<u8>> {
     let inp = tmp.path().join("in.bin");
     let outp = tmp.path().join("out.bin");
     std::fs::write(&inp, data).ok()?;
-    if !run(aether_common::quiet_command("upx").arg("-d").arg("-o").arg(&outp).arg(&inp)) {
+    if !run(aether_common::quiet_command("upx")
+        .arg("-d")
+        .arg("-o")
+        .arg(&outp)
+        .arg(&inp))
+    {
         return None;
     }
     std::fs::read(&outp).ok()
@@ -101,6 +106,9 @@ pub fn upx_unpack(data: &[u8]) -> Option<Vec<u8>> {
 pub fn extractors_available() -> Vec<&'static str> {
     ["7z", "7za", "unrar", "upx"]
         .into_iter()
-        .filter(|t| run(aether_common::quiet_command(*t).arg("--help")) || run(aether_common::quiet_command(*t).arg("-V")))
+        .filter(|t| {
+            run(aether_common::quiet_command(*t).arg("--help"))
+                || run(aether_common::quiet_command(*t).arg("-V"))
+        })
         .collect()
 }

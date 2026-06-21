@@ -180,7 +180,10 @@ rule contains_evil {
 
         let hits = engine.scan(b"prefix EVIL_PAYLOAD suffix").unwrap();
         // (rule, severity) - no severity meta declared -> defaults to "high".
-        assert_eq!(hits, vec![("contains_evil".to_string(), "high".to_string())]);
+        assert_eq!(
+            hits,
+            vec![("contains_evil".to_string(), "high".to_string())]
+        );
 
         let clean = engine.scan(b"nothing to see here").unwrap();
         assert!(clean.is_empty());

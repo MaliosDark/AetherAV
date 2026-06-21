@@ -1406,7 +1406,11 @@ fn write_clipboard(text: &str) -> bool {
         ]
     };
     for (cmd, a) in attempts {
-        if let Ok(mut c) = aether_common::quiet_command(cmd).args(*a).stdin(Stdio::piped()).spawn() {
+        if let Ok(mut c) = aether_common::quiet_command(cmd)
+            .args(*a)
+            .stdin(Stdio::piped())
+            .spawn()
+        {
             if let Some(mut si) = c.stdin.take() {
                 let _ = si.write_all(text.as_bytes());
             }

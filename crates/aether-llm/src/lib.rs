@@ -54,7 +54,9 @@ impl Default for LlmConfig {
 /// human-readable reason when the LLM should be skipped. RAM check is Linux-only
 /// (`/proc/meminfo`); elsewhere it relies on the core count.
 pub fn host_is_low_end() -> Option<String> {
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     if cores < 2 {
         return Some(format!("only {cores} CPU core"));
     }
@@ -161,7 +163,9 @@ impl LlmClassifier {
             .send_json(body)
             .ok()?;
         let v: serde_json::Value = resp.into_json().ok()?;
-        v.get("content").and_then(|c| c.as_str()).map(str::to_string)
+        v.get("content")
+            .and_then(|c| c.as_str())
+            .map(str::to_string)
     }
 }
 
