@@ -188,6 +188,8 @@ i[data-ic] svg{width:100%;height:100%;stroke:currentColor;stroke-width:1.8;fill:
 /* network connection map gets its own full-width row */
 .graph-row{display:block}
 .graph-row .graph{width:100%}
+.resmon-row{display:block;margin-top:14px}
+.resmon .resmon-table td:first-child{color:var(--txt)}
 .dtable{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
 .dtable th{text-align:left;color:var(--faint);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;padding:6px 8px;border-bottom:1px solid var(--line)}
 .dtable td{padding:9px 8px;border-bottom:1px solid #0f1f27;color:var(--muted)}

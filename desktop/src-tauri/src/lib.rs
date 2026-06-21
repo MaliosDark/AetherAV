@@ -392,6 +392,47 @@ fn metrics_snapshot(state: &AppState) -> Value {
     })
 }
 
+/// Top running processes by disk I/O (CPU breaks ties) - lets the user see what
+/// is hammering the machine right now (e.g. a process pinning the disk at 100%).
+/// Two refreshes ~500ms apart so `disk_usage()` reports a real per-second rate
+/// instead of a cold zero. The lock is released during the wait.
+#[tauri::command]
+fn top_processes(state: tauri::State<AppState>) -> Value {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
+    {
+        let mut sys = state.sys.lock().unwrap();
+        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::everything());
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let mut sys = state.sys.lock().unwrap();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::everything());
+    let ncpu = sys.cpus().len().max(1) as f32;
+    let mut rows: Vec<(f64, f64, Value)> = sys
+        .processes()
+        .iter()
+        .map(|(pid, p)| {
+            let du = p.disk_usage();
+            let io_kbs = (du.read_bytes + du.written_bytes) as f64 / 0.5 / 1024.0;
+            let cpu = (p.cpu_usage() / ncpu) as f64;
+            let mem_mb = p.memory() as f64 / 1_048_576.0;
+            (io_kbs, cpu, json!({
+                "pid": pid.as_u32(),
+                "name": p.name().to_string_lossy(),
+                "cpu": format!("{cpu:.1}"),
+                "mem_mb": format!("{mem_mb:.0}"),
+                "io_kbs": io_kbs.round() as u64,
+            }))
+        })
+        .collect();
+    // Disk I/O first (the user's concern), CPU as the tiebreaker.
+    rows.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    json!({ "processes": rows.into_iter().take(8).map(|(_, _, v)| v).collect::<Vec<_>>() })
+}
+
 /// Full dashboard payload - all live.
 #[tauri::command]
 fn dashboard_data(state: tauri::State<AppState>) -> Value {
@@ -1731,6 +1772,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             dashboard_data,
+            top_processes,
             app_version,
             app_ready,
             run_action,

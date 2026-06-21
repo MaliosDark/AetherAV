@@ -146,6 +146,20 @@
           <a class="more" data-link="network">Open Network Monitor <i data-ic="arrow"></i></a>
         </div>
       </section>
+
+      <!-- Resource monitor: what's using CPU / RAM / disk right now -->
+      <section class="resmon-row">
+        <div class="panel resmon">
+          <div class="panel-h-row">
+            <span class="panel-h">RESOURCE MONITOR <span class="live">(Live)</span></span>
+            <span class="hint">Top processes by disk I/O</span>
+          </div>
+          <table class="dtable resmon-table">
+            <thead><tr><th>Process</th><th>PID</th><th>CPU</th><th>RAM</th><th>Disk I/O</th></tr></thead>
+            <tbody id="resmon"><tr><td colspan="5" class="empty">Measuring…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
     </main>
 
     <!-- ================= RIGHT COLUMN ================= -->

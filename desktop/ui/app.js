@@ -243,6 +243,25 @@ function renderAll(d){
   }
 }
 
+// Resource monitor: live top-processes-by-disk-I/O table on the dashboard.
+let __resmonBusy=false;
+async function renderResmon(){
+  const tb=document.getElementById('resmon'); if(!tb||!TAURI) return;
+  if(document.querySelector('.app')?.classList.contains('page-mode')) return; // dashboard only
+  if(__resmonBusy) return; __resmonBusy=true;
+  try{
+    const r=await invoke('top_processes');
+    if(!r||!r.processes){ return; }
+    if(!r.processes.length){ tb.innerHTML='<tr><td colspan="5" class="empty">No active processes.</td></tr>'; return; }
+    tb.innerHTML=r.processes.map(p=>{
+      const io=+p.io_kbs||0;
+      const ioTxt = io>=1024 ? (io/1024).toFixed(1)+' MB/s' : io+' KB/s';
+      const style = io>20000 ? ' style="color:var(--red);font-weight:700"' : (io>2000?' style="color:var(--amber)"':'');
+      return `<tr><td>${escH(p.name)}</td><td class="muted">${p.pid}</td><td>${p.cpu}%</td><td>${p.mem_mb} MB</td><td${style}>${ioTxt}</td></tr>`;
+    }).join('');
+  } finally { __resmonBusy=false; }
+}
+
 // --- Wiring ---
 let LAST = SAMPLE;
 async function refresh(){
@@ -435,7 +454,7 @@ function bindPage(name, host){
   if(name==='settings'){
     const wrap=host.querySelector('#settingsForm');
     invoke('get_settings').then(s=>{
-      s=s||{heuristics:true,ml:true,yara:true,sandbox:true,intel:true,plugins:false,quarantine_dir:'',auto_update_hours:6};
+      s=s||{heuristics:true,ml:true,yara:true,sandbox:true,intel:true,plugins:false,llm:true,quarantine_dir:'',auto_update_hours:6};
       const tog=(key,label,desc)=>`<label class="setting"><input type="checkbox" data-set="${key}" ${s[key]?'checked':''}/><span><b>${label}</b><br><span class="muted">${desc}</span></span></label>`;
       wrap.innerHTML=`
         ${tog('heuristics','Static heuristics','Explainable PE/ELF/PDF/script scoring')}
@@ -444,6 +463,7 @@ function bindPage(name, host){
         ${tog('sandbox','Sandbox / emulation','Anti-evasion + shellcode analysis')}
         ${tog('intel','Threat-intel IOC matching','URLs/IPs/domains in content')}
         ${tog('plugins','Third-party plugins','Subprocess detectors')}
+        ${tog('llm','Aegis-50M on-device AI','Extra AI layer. Disable on slow/HDD disks to free I/O - the other 9 engines keep full protection.')}
         <div class="setting"><span><b>Quarantine directory</b><br><span class="muted">Encrypted vault location (blank = default)</span></span>
           <span style="display:flex;gap:8px;flex:1;max-width:420px"><input class="input" id="setQDir" value="${s.quarantine_dir||''}" placeholder="(default)"/><button class="btn inline" id="setQBrowse">Browse…</button></span></div>
         <div style="margin-top:14px"><button class="btn btn-primary inline" id="setSave"><i data-ic="check"></i> Save &amp; Reload Engines</button></div>`;
@@ -631,7 +651,7 @@ function bindPage(name, host){
 function setPage(name){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.page===name));
   const app=document.querySelector('.app');
-  if(name==='dashboard'){ app.classList.remove('page-mode'); refresh(); return; }
+  if(name==='dashboard'){ app.classList.remove('page-mode'); refresh(); renderResmon(); return; }
   app.classList.add('page-mode');
   const host=document.getElementById('pageHost');
   host.innerHTML=(PAGES[name]||(()=>'<div class="empty">Coming soon.</div>'))();
@@ -644,6 +664,7 @@ async function boot(){
   if(ver){ const bv=document.getElementById('brandVer'); if(bv) bv.textContent='v'+ver; window.__APPVER='v'+ver; }
 
   await refresh();
+  renderResmon();
 
   // Collapsible left menu.
   document.getElementById('menuToggle').addEventListener('click',()=>{
@@ -687,6 +708,7 @@ async function boot(){
       const m=e.payload; if(!m) return;
       renderSystem({os:m.os+' ('+m.arch+')',cpu:m.cpu,ram:m.ram,disk:m.disk,net:m.net});
       document.getElementById('sb-net-down').textContent=m.net;
+      renderResmon();
     });
     // Every native notification is mirrored here -> log it in the bell.
     await window.__TAURI__.event.listen('alert', e=>{ if(e.payload) pushNotif(e.payload); });
