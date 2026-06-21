@@ -39,6 +39,9 @@ aether-anomaly = { path = "../../crates/aether-anomaly" }
 # Real system metrics + in-app threat-intel downloads.
 sysinfo = "0.33"
 ureq = "2"
+# Per-device identity for the authenticated feed channel.
+getrandom = "0.2"
+hex = "0.4"
 
 [profile.release]
 opt-level = "s"

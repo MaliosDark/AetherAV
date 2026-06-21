@@ -73,6 +73,13 @@ pub fn sign_detached(secret: &[u8; 32], data: &[u8]) -> String {
     hex::encode(SigningKey::from_bytes(secret).sign(data).to_bytes())
 }
 
+/// Derive the hex Ed25519 public key for a 32-byte secret seed. Used by clients
+/// to advertise their per-device identity (the private seed never leaves them).
+pub fn public_hex(secret: &[u8; 32]) -> String {
+    use ed25519_dalek::SigningKey;
+    hex::encode(SigningKey::from_bytes(secret).verifying_key().to_bytes())
+}
+
 /// Verify a detached Ed25519 signature over `data` against a hex public key.
 pub fn verify_detached(pubkey_hex: &str, data: &[u8], sig_hex: &str) -> bool {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
