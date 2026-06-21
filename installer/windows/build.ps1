@@ -57,17 +57,15 @@ if (-not $makensis) {
   }
 }
 if (-not $makensis) { throw "makensis not found - is NSIS installed?" }
-# Run from the script's own dir: NSIS resolves File/bitmap paths against the
-# WORKING directory (Windows), so assets/ and payload/ must be relative to here.
-Push-Location "installer\windows"
-try {
-  if ($gui) { & $makensis /DWITH_GUI "aetherav.nsi" }
-  else      { & $makensis "aetherav.nsi" }
-  $nsisExit = $LASTEXITCODE
-} finally { Pop-Location }
-if ($nsisExit -ne 0) { throw "makensis failed (exit $nsisExit)" }
+# Pass the installer dir as an ABSOLUTE define so every File/bitmap path in the
+# .nsi resolves no matter what makensis' working directory is (Windows NSIS uses
+# the CWD; this removes that dependency entirely).
+$src = (Resolve-Path "installer\windows").Path
+if ($gui) { & $makensis /DWITH_GUI "/DSRCDIR=$src" "$src\aetherav.nsi" }
+else      { & $makensis "/DSRCDIR=$src" "$src\aetherav.nsi" }
+if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
 
-$setup = "installer\windows\AetherAV-Setup.exe"
+$setup = Join-Path $src "AetherAV-Setup.exe"
 Sign-File $setup
 New-Item -ItemType Directory -Force -Path dist | Out-Null
 Copy-Item $setup "dist\AetherAV-Setup-$Version.exe" -Force

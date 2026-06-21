@@ -26,20 +26,28 @@ SetCompressor /SOLID lzma
 !define RTTASK       "AetherAV Real-Time Protection"
 !define UNINSTKEY    "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
+; Absolute source dir (installer/windows), passed by build.ps1 as /DSRCDIR so
+; File/bitmap paths resolve regardless of makensis' working directory (Windows
+; NSIS resolves them against the CWD, which differs from Linux). Defaults to "."
+; so a manual `makensis` run from this folder still works.
+!ifndef SRCDIR
+  !define SRCDIR "."
+!endif
+
 Name "${APPNAME} ${VERSION}"
-OutFile "AetherAV-Setup.exe"
+OutFile "${SRCDIR}\AetherAV-Setup.exe"
 InstallDir "$PROGRAMFILES64\${APPNAME}"
 InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
 RequestExecutionLevel admin
 
 ; ---- Branding ----
-!define MUI_ICON   "assets/aetherav.ico"
-!define MUI_UNICON "assets/aetherav.ico"
+!define MUI_ICON   "${SRCDIR}\assets\aetherav.ico"
+!define MUI_UNICON "${SRCDIR}\assets\aetherav.ico"
 !define MUI_HEADERIMAGE
-!define MUI_HEADERIMAGE_BITMAP "assets/header.bmp"
+!define MUI_HEADERIMAGE_BITMAP "${SRCDIR}\assets\header.bmp"
 !define MUI_HEADERIMAGE_RIGHT
-!define MUI_WELCOMEFINISHPAGE_BITMAP "assets/welcome.bmp"
-!define MUI_UNWELCOMEFINISHPAGE_BITMAP "assets/welcome.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "${SRCDIR}\assets\welcome.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "${SRCDIR}\assets\welcome.bmp"
 !define MUI_ABORTWARNING
 
 ; ---- Welcome text ----
@@ -56,7 +64,7 @@ RequestExecutionLevel admin
 
 ; ---- Pages ----
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "..\LICENSE_EULA.txt"
+!insertmacro MUI_PAGE_LICENSE "${SRCDIR}\..\LICENSE_EULA.txt"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -76,12 +84,12 @@ Section "AetherAV core engine + app" SEC_CORE
   SectionIn RO
   SetOutPath "$INSTDIR"
 !ifdef WITH_GUI
-  File "payload/${DESKBIN}"
+  File "${SRCDIR}\payload\${DESKBIN}"
 !endif
-  File "payload/${CLIBIN}"
-  File "assets/aetherav.ico"
+  File "${SRCDIR}\payload\${CLIBIN}"
+  File "${SRCDIR}\assets\aetherav.ico"
   SetOutPath "$INSTDIR\assets"
-  File /r "payload/assets/*.*"
+  File /r "${SRCDIR}\payload\assets\*.*"
 
   ; Registry: install info + Add/Remove Programs entry.
   WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
