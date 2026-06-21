@@ -28,7 +28,7 @@ use aether_common::{EngineKind, Error, Result, ThreatLevel, Verdict};
 use serde::Deserialize;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// A declared plugin.
 #[derive(Debug, Clone, Deserialize)]
@@ -76,7 +76,7 @@ fn parse_level(s: &str) -> ThreatLevel {
 impl PluginManifest {
     /// Run this plugin against `data`, returning the verdicts it reports.
     pub fn scan(&self, data: &[u8]) -> Result<Vec<Verdict>> {
-        let mut child = Command::new(&self.command)
+        let mut child = aether_common::quiet_command(&self.command)
             .args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

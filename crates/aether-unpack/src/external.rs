@@ -67,13 +67,13 @@ pub fn rar_extract(data: &[u8], limits: Limits) -> Vec<ExtractedFile> {
     }
     let odir = out.display().to_string();
     // 7z handles RAR and writes to -o<dir>; unrar uses a trailing dest path.
-    let ok = run(Command::new("7z")
+    let ok = run(aether_common::quiet_command("7z")
         .args(["x", "-y", "-bso0", "-bsp0", &format!("-o{odir}")])
         .arg(&rar))
-        || run(Command::new("7za")
+        || run(aether_common::quiet_command("7za")
             .args(["x", "-y", &format!("-o{odir}")])
             .arg(&rar))
-        || run(Command::new("unrar")
+        || run(aether_common::quiet_command("unrar")
             .args(["x", "-y", "-inul"])
             .arg(&rar)
             .arg(format!("{odir}/")));
@@ -91,7 +91,7 @@ pub fn upx_unpack(data: &[u8]) -> Option<Vec<u8>> {
     let inp = tmp.path().join("in.bin");
     let outp = tmp.path().join("out.bin");
     std::fs::write(&inp, data).ok()?;
-    if !run(Command::new("upx").arg("-d").arg("-o").arg(&outp).arg(&inp)) {
+    if !run(aether_common::quiet_command("upx").arg("-d").arg("-o").arg(&outp).arg(&inp)) {
         return None;
     }
     std::fs::read(&outp).ok()
@@ -101,6 +101,6 @@ pub fn upx_unpack(data: &[u8]) -> Option<Vec<u8>> {
 pub fn extractors_available() -> Vec<&'static str> {
     ["7z", "7za", "unrar", "upx"]
         .into_iter()
-        .filter(|t| run(Command::new(*t).arg("--help")) || run(Command::new(*t).arg("-V")))
+        .filter(|t| run(aether_common::quiet_command(*t).arg("--help")) || run(aether_common::quiet_command(*t).arg("-V")))
         .collect()
 }

@@ -224,7 +224,7 @@ pub fn parse_netstat_bsd(text: &str) -> Vec<Connection> {
 pub fn connections() -> Vec<Connection> {
     #[cfg(target_os = "windows")]
     {
-        return std::process::Command::new("netstat")
+        return aether_common::quiet_command("netstat")
             .args(["-ano", "-p", "tcp"])
             .output()
             .ok()

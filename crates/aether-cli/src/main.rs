@@ -1368,7 +1368,6 @@ fn run_webprotect(config: Config, args: WebprotectArgs) -> Result<ExitCode> {
 
 /// Read the OS clipboard via whatever tool is available. Returns None if none.
 fn read_clipboard() -> Option<String> {
-    use std::process::Command;
     let attempts: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
         &[("pbpaste", &[])]
     } else if cfg!(target_os = "windows") {
@@ -1381,7 +1380,7 @@ fn read_clipboard() -> Option<String> {
         ]
     };
     for (cmd, a) in attempts {
-        if let Ok(o) = Command::new(cmd).args(*a).output() {
+        if let Ok(o) = aether_common::quiet_command(cmd).args(*a).output() {
             if o.status.success() {
                 let s = String::from_utf8_lossy(&o.stdout);
                 return Some(s.trim_end_matches(['\n', '\r']).to_string());
@@ -1394,7 +1393,7 @@ fn read_clipboard() -> Option<String> {
 /// Write text to the OS clipboard. Returns true on success.
 fn write_clipboard(text: &str) -> bool {
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     let attempts: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
         &[("pbcopy", &[])]
     } else if cfg!(target_os = "windows") {
@@ -1407,7 +1406,7 @@ fn write_clipboard(text: &str) -> bool {
         ]
     };
     for (cmd, a) in attempts {
-        if let Ok(mut c) = Command::new(cmd).args(*a).stdin(Stdio::piped()).spawn() {
+        if let Ok(mut c) = aether_common::quiet_command(cmd).args(*a).stdin(Stdio::piped()).spawn() {
             if let Some(mut si) = c.stdin.take() {
                 let _ = si.write_all(text.as_bytes());
             }
@@ -1798,9 +1797,35 @@ fn run_netscan(config: Config) -> Result<ExitCode> {
 }
 
 /// Real-time on-access protection: scan files as they appear/change.
+/// On Windows, hide the current process's console window so the background
+/// watcher (started by Task Scheduler) runs silently with no `cmd`-style window.
+/// No-op on other platforms.
+#[cfg(windows)]
+fn hide_console_window() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetConsoleWindow() -> isize;
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn ShowWindow(hwnd: isize, n_cmd_show: i32) -> i32;
+    }
+    unsafe {
+        let hwnd = GetConsoleWindow();
+        if hwnd != 0 {
+            ShowWindow(hwnd, 0); // SW_HIDE
+        }
+    }
+}
+#[cfg(not(windows))]
+fn hide_console_window() {}
+
 fn run_watch(config: Config, args: WatchArgs) -> Result<ExitCode> {
     use aether_realtime::FileWatcher;
     use std::time::Duration;
+
+    // Background service: don't leave a console window on screen (Windows).
+    hide_console_window();
 
     let scanner = Scanner::new(config).context("failed to initialize scanner")?;
     let watcher = FileWatcher::watch(&args.path).map_err(|e| anyhow::anyhow!(e))?;
@@ -2563,7 +2588,7 @@ fn run_eval(config: Config, args: EvalArgs) -> Result<ExitCode> {
 
 /// Count files ClamAV flags in `dir` (`<file>: <sig> FOUND`). None if unavailable.
 fn clamscan_detections(dir: &std::path::Path) -> Option<usize> {
-    let out = std::process::Command::new("clamscan")
+    let out = aether_common::quiet_command("clamscan")
         .args(["-r", "--no-summary", "-i"])
         .arg(dir)
         .output()

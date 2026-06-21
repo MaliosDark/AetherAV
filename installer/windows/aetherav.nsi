@@ -12,7 +12,9 @@ SetCompressor /SOLID lzma
 
 !define APPNAME      "AetherAV"
 !define COMPANY      "AetherAV"
-!define VERSION      "2026.1.0"
+!ifndef VERSION
+  !define VERSION    "2026.1.0"   ; overridden by build.ps1 via /DVERSION=<tag>
+!endif
 !define DESKBIN      "aether-desktop.exe"
 !define CLIBIN       "aether.exe"
 ; The desktop GUI is bundled only when build.ps1 passes /DWITH_GUI (i.e. the

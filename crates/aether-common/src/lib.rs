@@ -239,6 +239,25 @@ mod duration_millis {
     }
 }
 
+/// Build a [`std::process::Command`] that never flashes a console window on
+/// Windows. AetherAV runs as a background watcher and a GUI app, so every helper
+/// process it spawns (netstat, the LLM runner, unpackers, …) must stay invisible
+/// instead of popping a `cmd`/console window. No-op on non-Windows platforms.
+pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = std::process::Command::new(program);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new(program)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

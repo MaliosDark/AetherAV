@@ -331,7 +331,14 @@ impl RuleSet {
                     if line.is_empty() || line.starts_with("::") {
                         continue;
                     }
-                    let st = Command::new("cmd").args(["/C", line]).status()?;
+                    let mut c = Command::new("cmd");
+                    c.args(["/C", line]);
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+                    }
+                    let st = c.status()?;
                     if st.success() {
                         applied += 1;
                     }

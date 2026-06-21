@@ -12,7 +12,6 @@
 
 use aether_common::{EngineKind, ThreatLevel, Verdict};
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Configuration for the embedded model.
 #[derive(Debug, Clone)]
@@ -130,7 +129,7 @@ impl LlmClassifier {
 
     /// Spawn a fresh llama.cpp process for one classification (no server).
     fn classify_cli(&self, artifact: &str) -> Option<String> {
-        let out = Command::new(&self.cfg.runner)
+        let out = aether_common::quiet_command(&self.cfg.runner)
             .arg("-m")
             .arg(&self.cfg.model)
             .args([

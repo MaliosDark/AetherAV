@@ -61,8 +61,8 @@ if (-not $makensis) { throw "makensis not found - is NSIS installed?" }
 # .nsi resolves no matter what makensis' working directory is (Windows NSIS uses
 # the CWD; this removes that dependency entirely).
 $src = (Resolve-Path "installer\windows").Path
-if ($gui) { & $makensis /DWITH_GUI "/DSRCDIR=$src" "$src\aetherav.nsi" }
-else      { & $makensis "/DSRCDIR=$src" "$src\aetherav.nsi" }
+if ($gui) { & $makensis /DWITH_GUI "/DSRCDIR=$src" "/DVERSION=$Version" "$src\aetherav.nsi" }
+else      { & $makensis "/DSRCDIR=$src" "/DVERSION=$Version" "$src\aetherav.nsi" }
 if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
 
 $setup = Join-Path $src "AetherAV-Setup.exe"
