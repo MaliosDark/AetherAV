@@ -133,14 +133,29 @@ impl YaraEngine {
     ///
     /// A fresh `Scanner` is created per call so the engine is `Sync` and can be
     /// shared across rayon worker threads without locking.
-    pub fn scan(&self, data: &[u8]) -> Result<Vec<String>> {
+    /// Returns each matching rule as `(identifier, severity)`. `severity` is the
+    /// rule's `meta: severity = "..."` value (e.g. low/medium/high/critical),
+    /// defaulting to `"high"` when absent. The caller maps it to a threat level
+    /// so heuristic (medium/low) rules don't all read as outright malicious.
+    pub fn scan(&self, data: &[u8]) -> Result<Vec<(String, String)>> {
         let mut scanner = yara_x::Scanner::new(&self.rules);
         let results = scanner
             .scan(data)
             .map_err(|e| Error::Yara(format!("scan error: {e}")))?;
         Ok(results
             .matching_rules()
-            .map(|r| r.identifier().to_string())
+            .map(|r| {
+                let severity = r
+                    .metadata()
+                    .into_iter()
+                    .find(|(k, _)| *k == "severity")
+                    .and_then(|(_, v)| match v {
+                        yara_x::MetaValue::String(s) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "high".to_string());
+                (r.identifier().to_string(), severity)
+            })
             .collect())
     }
 }
@@ -164,7 +179,8 @@ rule contains_evil {
         assert_eq!(engine.rule_count(), 1);
 
         let hits = engine.scan(b"prefix EVIL_PAYLOAD suffix").unwrap();
-        assert_eq!(hits, vec!["contains_evil".to_string()]);
+        // (rule, severity) - no severity meta declared -> defaults to "high".
+        assert_eq!(hits, vec![("contains_evil".to_string(), "high".to_string())]);
 
         let clean = engine.scan(b"nothing to see here").unwrap();
         assert!(clean.is_empty());

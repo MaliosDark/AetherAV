@@ -304,11 +304,16 @@ impl Scanner {
         if self.config.engines.yara {
             match self.yara.scan(data) {
                 Ok(hits) => {
-                    for rule in hits {
-                        verdicts.push(
-                            Verdict::malicious(EngineKind::Yara, rule, 0.9)
-                                .with_detail("YARA-X rule match"),
-                        );
+                    for (rule, severity) in hits {
+                        // Respect the rule's declared severity: heuristic (medium/
+                        // low) rules are SUSPICIOUS, not outright malicious - this
+                        // alone stops "suspicious imports / obfuscation" rules from
+                        // branding every browser and tool as malware.
+                        let v = match severity.to_ascii_lowercase().as_str() {
+                            "critical" | "high" => Verdict::malicious(EngineKind::Yara, rule, 0.9),
+                            _ => Verdict::suspicious(EngineKind::Yara, rule, 0.55),
+                        };
+                        verdicts.push(v.with_detail("YARA-X rule match"));
                     }
                 }
                 Err(e) => tracing::warn!(error = %e, path = %path.display(), "yara scan failed"),
@@ -443,23 +448,21 @@ impl Scanner {
             verdicts.extend(ioc_match(intel, data));
         }
 
-        // --- Engine 8: dynamic sandbox / emulation (anti-evasion + shellcode) ---
-        // Run on executables and on raw/unknown buffers (where shellcode hides),
-        // bounded in size to keep the disassembly sweep cheap.
+        // --- Engine 8: dynamic sandbox / shellcode emulation ---
+        // ONLY on raw, headerless buffers (FileFormat::Unknown) - where shellcode
+        // and exploit stages actually hide. We deliberately do NOT linearly sweep
+        // whole valid PE executables: legitimate compiled code naturally contains
+        // PEB access, GetPC trampolines and cpuid/anti-debug sequences, so running
+        // the shellcode heuristics over a full PE flagged almost every normal
+        // Windows process (lsass, Defender, browsers…) as malicious. Real PEs are
+        // covered by the hash / YARA / pattern / heuristic / ML / LLM engines.
         if self.config.engines.sandbox
             && data.len() <= 4 * 1024 * 1024
-            && matches!(format, FileFormat::Pe | FileFormat::Unknown)
+            && matches!(format, FileFormat::Unknown)
         {
-            let bitness = match format {
-                FileFormat::Pe => match PeInfo::parse(data).map(|p| p.arch) {
-                    Ok(aether_parsers::pe::Arch::X86) => aether_sandbox::Bitness::Bits32,
-                    _ => aether_sandbox::Bitness::Bits64,
-                },
-                _ => aether_sandbox::Bitness::Bits64,
-            };
             verdicts.extend(
                 aether_sandbox::Sandbox::new()
-                    .analyze(data, bitness)
+                    .analyze(data, aether_sandbox::Bitness::Bits64)
                     .verdicts,
             );
         }

@@ -208,8 +208,12 @@ rule AetherAV_Script_Obfuscation
         $g = "unescape(" nocase
         $eval = "eval(" nocase
     condition:
-        any of ($b,$c,$d) or
-        ($a and $eval) or ($g and $eval and #e > 30)
+        // Scripts only: skip real executables (MZ header) - compiled apps (Tauri,
+        // Node/Electron, drivers) embed JS/HTML that would otherwise match here.
+        uint16(0) != 0x5A4D and (
+            any of ($b,$c,$d) or
+            ($a and $eval) or ($g and $eval and #e > 30)
+        )
 }
 
 rule AetherAV_UPX_Packed
@@ -237,16 +241,17 @@ rule AetherAV_Suspicious_PE_Imports
         $b = "WriteProcessMemory"
         $c = "CreateRemoteThread"
         $d = "SetWindowsHookEx"
-        $e = "GetProcAddress"
-        $f = "LoadLibraryA"
         $g = "NtUnmapViewOfSection"
         $h = "QueueUserAPC"
     condition:
+        // GetProcAddress / LoadLibraryA were dropped on purpose: they're in EVERY
+        // normal PE, so they only inflated false positives. Match on the actual
+        // injection primitives. severity = medium => engine treats this Suspicious.
         $mz at 0 and (
             ($a and $b and $c) or
             ($b and $g) or
             ($h and $a) or
-            (4 of ($a,$b,$c,$d,$e,$f,$g,$h))
+            (3 of ($a,$b,$c,$d,$g,$h))
         )
 }
 
