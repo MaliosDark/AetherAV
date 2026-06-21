@@ -770,9 +770,10 @@ function LivePage() {
             <span className="live-dot" />{online ? 'LIVE' : 'CONNECTING…'}
           </span>
           <h2 style={{ margin: '12px 0 6px' }}>AetherAV Threat Intelligence</h2>
-          <p className="section-sub" style={{ margin: '0 auto', maxWidth: 600 }}>
-            Real-time analysis from the community pipeline - anonymous submissions, scanned by all
-            ten engines, with live verdicts.{online ? '' : ' Waiting for ' + API.replace(/^https?:\/\//, '') + '…'}
+          <p className="section-sub" style={{ margin: '0 auto', maxWidth: 620 }}>
+            <span className="preview-tag">PREVIEW</span> A live preview of the community
+            pipeline. The activity below is representative sample data while the public feed
+            ramps up - real anonymous submissions replace it as they arrive.{online ? '' : ' Waiting for ' + API.replace(/^https?:\/\//, '') + '…'}
           </p>
         </div>
 

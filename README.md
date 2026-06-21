@@ -32,6 +32,16 @@ your computer. AetherAV flips that: **every line is open** so you can verify it
 isn't spying on you - yet it's **not easy to bypass**, because its security comes
 from cryptography and behavior analysis, not from hiding its code.
 
+> **Honest status — read this first.** AetherAV is in **active development /
+> early beta**: a real, working engine, not a finished product. It is **not** a
+> drop-in replacement for Microsoft Defender, and we make **no claim** to
+> out-detect commercial suites backed by thousands of analysts. Run it
+> **alongside** Defender, not instead of it. What it gives you that a black-box
+> AV can't: full auditability, bit-for-bit reproducible builds, signed-update
+> integrity, on-device AI, and **zero telemetry**. We publish detection numbers
+> only when they're **independently reproducible** - see
+> [Benchmarking](docs/BENCHMARK.md) and the credibility roadmap below.
+
 | | AetherAV |
 |---|---|
 | 🔓 **Open source** | Read it, audit it, build it yourself - bit-for-bit reproducible. |
@@ -85,8 +95,11 @@ flowchart TD
     class CLEAN good
 ```
 
-After this big rework, false positives on a clean-binary test dropped from
-**~40% -> ~0%** while detection stayed **100%** (internal `aether eval`).
+We don't publish self-reported detection percentages - they're meaningless
+unless you can reproduce them. Run the numbers yourself against a public corpus:
+`./tools/benchmark.sh --malware <dir> --clean <dir>` (see [docs/BENCHMARK.md](docs/BENCHMARK.md)).
+Independent results (VirusTotal contributor, then AV-Comparatives) are on the
+roadmap; until then, trust the method, not a marketing figure.
 
 ---
 
@@ -386,10 +399,20 @@ x86_64 + ARM) + CI** · **Ed25519-verifiable releases** ·
 **VirusTotal-contributor package** · marketing website (`web/`) · reproducible
 builds.
 
-**Next:** ship the Windows kernel minifilter + macOS EndpointSecurity · deploy
-the public feed server · grow detection content. We intentionally **skip paid OS
-code-signing** - trust comes from reproducible builds + Ed25519-signed releases,
-not from a Certificate Authority (see [docs/VERIFY.md](docs/VERIFY.md)).
+**Stage:** active development / early beta - a working engine, not a finished
+product (see the honest-status note up top).
+
+**Earning trust (the credibility roadmap):**
+1. **Reproducible public benchmark** against an open corpus (MOTIF / SOREL / BODMAS)
+   so anyone can run our numbers - see [docs/BENCHMARK.md](docs/BENCHMARK.md).
+2. **VirusTotal contributor** (the `vt-scan` package is ready) for an *independent*
+   detection signal.
+3. **AV-Comparatives → AV-TEST** - see [docs/CERTIFICATION.md](docs/CERTIFICATION.md).
+
+**Also next:** ship the Windows kernel minifilter + macOS EndpointSecurity ·
+deploy the public feed server · grow detection content. We intentionally **skip
+paid OS code-signing** - trust comes from reproducible builds + Ed25519-signed
+releases, not from a Certificate Authority (see [docs/VERIFY.md](docs/VERIFY.md)).
 
 ## 📜 License
 
