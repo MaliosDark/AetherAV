@@ -63,8 +63,11 @@ for name, fmt, url in FEEDS:
     with tempfile.NamedTemporaryFile("wb", suffix=".txt", delete=False) as fh:
         fh.write(data)
         path = fh.name
+    # Use the run's shared version so delta computation stays consistent.
+    ver = os.environ.get("FEED_VERSION", "1")
     r = subprocess.run(
-        [AETHER, "intel", "import", path, "--format", fmt, "--threat", name, "--store", STORE],
+        [AETHER, "intel", "import", path, "--format", fmt, "--threat", name,
+         "--store", STORE, "--feed-version", ver],
         capture_output=True, text=True)
     os.unlink(path)
     out = (r.stdout or r.stderr).strip().splitlines()

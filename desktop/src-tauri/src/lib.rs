@@ -1152,9 +1152,15 @@ fn update_intel(app: tauri::AppHandle, state: tauri::State<AppState>) -> Value {
 /// record the last-update time.
 #[tauri::command]
 fn update_now(app: tauri::AppHandle, state: tauri::State<AppState>) -> Value {
+    // Load our current store first so we can ask the server only for what's new.
+    let store_path = state.assets.join("models/intel.json");
+    let mut store = aether_intel::IntelStore::load_or_new(&store_path).unwrap_or_default();
+    let cur_ver = store.version;
     // Use the explicit override if set, else the built-in obfuscated endpoint.
     let cfg_url = state.settings.lock().unwrap().update_url.clone();
-    let url = if cfg_url.trim().is_empty() { feed_url() } else { cfg_url };
+    let base = if cfg_url.trim().is_empty() { feed_url() } else { cfg_url };
+    // Incremental pull: only IOCs newer than what we already have (small delta).
+    let url = format!("{base}?since={cur_ver}");
     // Prove this device's identity with a fresh signed request (no shared secret).
     let (pubk, ts, sig) = signed_headers(&state.assets);
     let auth = [
@@ -1171,8 +1177,6 @@ fn update_now(app: tauri::AppHandle, state: tauri::State<AppState>) -> Value {
         Ok(f) => f,
         Err(e) => return json!({"ok": false, "message": format!("Bad feed: {e}")}),
     };
-    let store_path = state.assets.join("models/intel.json");
-    let mut store = aether_intel::IntelStore::load_or_new(&store_path).unwrap_or_default();
     let added = match store.apply_signed(&feed) {
         Ok(n) => n,
         Err(e) => return json!({"ok": false, "message": format!("Rejected: {e}")}),

@@ -17,7 +17,7 @@ STORE="assets/models/intel.json"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-VER="$(date +%Y%m%d%H)"
+VER="${FEED_VERSION:-$(date +%s)}"   # epoch; one version per refresh run (delta-consistent)
 KEY="${ABUSE_CH_AUTH_KEY:-}"            # free key from https://auth.abuse.ch/
 FULL="${ABUSE_CH_FULL:-}"              # set =1 (with a key) to pull the FULL dumps (millions)
 HDR=(); [ -n "$KEY" ] && HDR=(-H "Auth-Key: $KEY")

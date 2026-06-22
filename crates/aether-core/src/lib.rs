@@ -924,11 +924,13 @@ mod tests {
             1,
             vec![
                 Ioc {
+                    ver: 0,
                     kind: IocKind::Url,
                     value: "http://evil.example/c2".into(),
                     threat: "C2.Test".into(),
                 },
                 Ioc {
+                    ver: 0,
                     kind: IocKind::Ipv4,
                     value: "45.9.1.2".into(),
                     threat: "Bot.Test".into(),

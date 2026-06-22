@@ -14,6 +14,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
+# One monotonic version for the whole run, threaded through every import and the
+# publish step. This keeps the per-IOC version stamps consistent so the server's
+# incremental (delta) feeds are computed correctly.
+export FEED_VERSION="$(date +%s)"
+
 log "fetching fresh intel from all sources…"
 ./tools/update-intel.sh        || log "warn: intel fetch had warnings (some sources unreachable?)"
 python3 tools/import_feeds.py   2>/dev/null || log "warn: IP/domain feeds skipped"

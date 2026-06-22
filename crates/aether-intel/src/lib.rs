@@ -32,6 +32,11 @@ pub struct Ioc {
     pub value: String,
     #[serde(default)]
     pub threat: String,
+    /// Store version at which this indicator first entered. Lets the server build
+    /// incremental (delta) feeds - clients pull only IOCs newer than they have.
+    /// Not part of `canonical()`, so it never affects the signature.
+    #[serde(default)]
+    pub ver: u64,
 }
 
 impl Ioc {
@@ -218,6 +223,7 @@ impl Feed {
                     _ => return None,
                 };
                 Some(Ioc {
+                    ver: 0,
                     kind,
                     value: a.value,
                     threat: threat.to_string(),
@@ -264,6 +270,7 @@ impl Feed {
                 .unwrap_or("ThreatFox.IOC")
                 .to_string();
             iocs.push(Ioc {
+                ver: 0,
                 kind,
                 value,
                 threat,
@@ -290,6 +297,7 @@ impl Feed {
                 t => t,
             };
             iocs.push(Ioc {
+                ver: 0,
                 kind: IocKind::Url,
                 value: f[2].trim().to_string(),
                 threat: threat.to_string(),
@@ -316,6 +324,7 @@ impl Feed {
                 t => t,
             };
             iocs.push(Ioc {
+                ver: 0,
                 kind: IocKind::Ipv4,
                 value: f[1].trim().to_string(),
                 threat: threat.to_string(),
@@ -353,6 +362,7 @@ impl Feed {
                 .unwrap_or("MalwareBazaar.Sample")
                 .to_string();
             iocs.push(Ioc {
+                ver: 0,
                 kind: IocKind::Sha256,
                 value: sha,
                 threat,
@@ -370,6 +380,7 @@ impl Feed {
             .map(|l| l.trim().trim_matches('"').trim())
             .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
             .map(|h| Ioc {
+                ver: 0,
                 kind: IocKind::Sha256,
                 value: h.to_lowercase(),
                 threat: threat.to_string(),
@@ -389,6 +400,7 @@ impl Feed {
             .filter_map(|l| {
                 let tok = l.split([' ', '\t', ',', ';']).next().unwrap_or("").trim();
                 Self::looks_ipv4(tok).then(|| Ioc {
+                    ver: 0,
                     kind: IocKind::Ipv4,
                     value: tok.to_string(),
                     threat: threat.to_string(),
@@ -417,6 +429,7 @@ impl Feed {
                     && d.chars()
                         .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
                 ok.then(|| Ioc {
+                    ver: 0,
                     kind: IocKind::Domain,
                     value: d.to_lowercase(),
                     threat: threat.to_string(),
@@ -506,7 +519,17 @@ impl IntelStore {
         }
         let mut changed = 0;
         for ioc in &feed.iocs {
-            self.iocs.insert(ioc.key(), ioc.clone());
+            let k = ioc.key();
+            // Stamp a brand-new indicator with this feed's version; keep the
+            // original version for one we already have (incl. legacy ver==0, the
+            // pre-delta baseline) so re-imports never wrongly look "new" in deltas.
+            let first_ver = match self.iocs.get(&k) {
+                Some(existing) => existing.ver,
+                None => feed.version,
+            };
+            let mut ioc = ioc.clone();
+            ioc.ver = first_ver;
+            self.iocs.insert(k, ioc);
             changed += 1;
         }
         self.version = self.version.max(feed.version);
@@ -544,6 +567,22 @@ impl IntelStore {
     /// to be signed and published for clients to auto-pull.
     pub fn to_feed(&self, version: u64) -> Feed {
         Feed::new(version, self.iocs.values().cloned().collect())
+    }
+
+    /// Export only the indicators newer than `since` (a client's current version)
+    /// as a delta feed stamped `version`. `since == 0` returns the full snapshot.
+    /// The result is unsigned - the caller signs it before sending to clients.
+    pub fn to_feed_since(&self, since: u64, version: u64) -> Feed {
+        let iocs: Vec<Ioc> = if since == 0 {
+            self.iocs.values().cloned().collect()
+        } else {
+            self.iocs
+                .values()
+                .filter(|i| i.ver > since)
+                .cloned()
+                .collect()
+        };
+        Feed::new(version, iocs)
     }
 
     /// Iterate over every stored indicator (e.g. to feed the firewall / web
@@ -632,12 +671,14 @@ mod tests {
             version,
             vec![
                 Ioc {
+                    ver: 0,
                     kind: IocKind::Sha256,
                     value: "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f"
                         .into(),
                     threat: "Test.EICAR".into(),
                 },
                 Ioc {
+                    ver: 0,
                     kind: IocKind::Domain,
                     value: "evil.example".into(),
                     threat: "C2.Generic".into(),
@@ -756,6 +797,7 @@ mod tests {
         let delta = Feed::new(
             2,
             vec![Ioc {
+                ver: 0,
                 kind: IocKind::Sha256,
                 value: "ab".repeat(32),
                 threat: "Mal.New".into(),

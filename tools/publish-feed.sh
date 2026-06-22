@@ -22,7 +22,9 @@ OUT="dist-feed"
 [ -x "$AETHER" ] || { echo "build first: cargo build --release -p aether-cli"; exit 1; }
 
 mkdir -p "$OUT"
-VER="$(date +%s)"
+# Reuse the run's version if set (so the full file's version == the store version
+# == the IOC stamps, which the server's delta endpoint relies on).
+VER="${FEED_VERSION:-$(date +%s)}"
 
 echo ">> exporting feed v$VER from $STORE"
 "$AETHER" intel export-feed --store "$STORE" -o "$OUT/aether.unsigned.json" --feed-version "$VER"
