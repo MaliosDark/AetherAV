@@ -43,10 +43,35 @@ impl HashDb {
         Self::from_text(&text)
     }
 
+    /// Load administrator signatures alongside the reviewed, bundled SHA-256
+    /// records. An installation with no external database still has coverage.
+    pub fn load_with_bundled(path: impl AsRef<Path>) -> Result<HashDb> {
+        let path = path.as_ref();
+        let bundled = include_str!("curated-sha256.db").lines();
+        let external = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!(path = %path.display(), "using bundled hash signatures");
+                return Self::from_lines(bundled);
+            }
+            Err(source) => {
+                return Err(Error::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })
+            }
+        };
+        Self::from_lines(bundled.chain(external.lines()))
+    }
+
     /// Parse a database from its textual form.
     pub fn from_text(text: &str) -> Result<HashDb> {
+        Self::from_lines(text.lines())
+    }
+
+    fn from_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Result<HashDb> {
         let mut entries: Vec<(String, String)> = Vec::new();
-        for (lineno, raw) in text.lines().enumerate() {
+        for (lineno, raw) in lines.enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -116,6 +141,19 @@ mod tests {
     use super::*;
 
     const EICAR_SHA256: &str = "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f";
+
+    #[test]
+    fn curated_signatures_are_loaded_without_an_external_db() {
+        let folder = tempfile::tempdir().unwrap();
+        let db = HashDb::load_with_bundled(folder.path().join("uninstalled.db")).unwrap();
+        assert_eq!(db.len(), 19);
+        let first = include_str!("curated-sha256.db")
+            .lines()
+            .find(|line| line.starts_with(|c: char| c.is_ascii_hexdigit()))
+            .unwrap();
+        let (hash, label) = first.split_once(' ').unwrap();
+        assert_eq!(db.lookup(hash), Some(label));
+    }
 
     #[test]
     fn parses_and_matches() {

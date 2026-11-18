@@ -22,6 +22,7 @@ aether-config = { workspace = true }
 aether-core = { workspace = true }
 aether-signatures = { workspace = true }
 aether-behavior = { workspace = true }
+aether-llm = { workspace = true }
 aether-sandbox = { workspace = true }
 aether-anomaly = { workspace = true }
 aether-realtime = { workspace = true }
@@ -36,3 +37,4 @@ tracing = { workspace = true }
 ureq = { workspace = true }
 serde_json = { workspace = true }
 aether-parsers.workspace = true
+tempfile = { workspace = true }

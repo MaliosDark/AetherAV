@@ -145,7 +145,7 @@ enum IntelCmd {
     Import {
         file: PathBuf,
         /// Source format.
-        #[arg(long, default_value = "threatfox", value_parser = ["threatfox", "sha256", "misp", "urlhaus", "feodo", "malwarebazaar", "iplist", "domainlist"])]
+        #[arg(long, default_value = "threatfox", value_parser = ["threatfox", "threatfox-json", "sha256", "misp", "urlhaus", "feodo", "malwarebazaar", "iplist", "domainlist"])]
         format: String,
         #[arg(long, default_value = "assets/models/intel.json")]
         store: PathBuf,
@@ -191,6 +191,12 @@ struct BehaviorArgs {
     /// Emit machine-readable JSON instead of a human report.
     #[arg(long)]
     json: bool,
+    /// Score anomalies against a baseline learned from benign traces.
+    #[arg(long)]
+    baseline: Option<PathBuf>,
+    /// Ask the configured local Aegis model to review a summary of the evidence.
+    #[arg(long)]
+    aegis: bool,
 }
 
 #[derive(Debug, Args)]
@@ -522,7 +528,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Scan(args) => run_scan(config, args),
-        Command::Behavior(args) => run_behavior(args),
+        Command::Behavior(args) => run_behavior(config, args),
         Command::Emulate(args) => run_emulate(args),
         Command::Learn(args) => run_learn(args),
         Command::Anomaly(args) => run_anomaly(args),
@@ -650,28 +656,78 @@ fn run_scan(mut config: Config, args: ScanArgs) -> Result<ExitCode> {
 }
 
 /// Analyze a behavioral event trace. Exit codes match `scan`.
-fn run_behavior(args: BehaviorArgs) -> Result<ExitCode> {
-    use aether_behavior::BehaviorEngine;
+fn run_behavior(config: Config, args: BehaviorArgs) -> Result<ExitCode> {
+    use aether_anomaly::{AnomalyEngine, Baseline};
+    use aether_behavior::{BehaviorEngine, Event};
+    use std::io::Read;
 
-    let json = std::fs::read_to_string(&args.trace)
+    const MAX_TRACE_BYTES: u64 = 16 * 1024 * 1024;
+    let mut json = String::new();
+    std::fs::File::open(&args.trace)
+        .with_context(|| format!("opening trace {}", args.trace.display()))?
+        .take(MAX_TRACE_BYTES + 1)
+        .read_to_string(&mut json)
         .with_context(|| format!("reading trace {}", args.trace.display()))?;
-    let report = BehaviorEngine::new()
-        .analyze_json(&json)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    anyhow::ensure!(
+        json.len() as u64 <= MAX_TRACE_BYTES,
+        "behavior trace exceeds 16 MiB"
+    );
+    let events = Event::from_json(&json).map_err(anyhow::Error::msg)?;
+    let mut report = BehaviorEngine::new().analyze(&events);
+
+    if let Some(path) = args.baseline {
+        let baseline = Baseline::load_or_new(&path)?;
+        anyhow::ensure!(
+            baseline.is_trained(),
+            "baseline {} needs benign training data",
+            path.display()
+        );
+        report
+            .verdicts
+            .extend(AnomalyEngine::new(baseline).score(&events));
+    }
+
+    if args.aegis {
+        let model = aether_llm::LlmClassifier::new(aether_llm::LlmConfig {
+            enabled: true,
+            runner: config.engines.llm_runner,
+            model: config.engines.llm_model,
+            server_url: config.engines.llm_server_url,
+            ..Default::default()
+        });
+        anyhow::ensure!(model.is_available(), "no usable local Aegis backend");
+        if !report.verdicts.is_empty() {
+            let mut evidence: Vec<_> = report
+                .verdicts
+                .iter()
+                .map(|v| v.signature.as_str())
+                .collect();
+            evidence.sort_unstable();
+            evidence.dedup();
+            let summary = format!(
+                "events={} entities={} relationships={} detectors={}",
+                events.len(),
+                report.nodes,
+                report.edges,
+                evidence.join(", ")
+            );
+            if let Some(verdict) = model.review_behavior(&summary) {
+                report.verdicts.push(verdict);
+            }
+        }
+    }
 
     if args.json {
         for v in &report.verdicts {
             println!(
-                r#"{{"signature":"{}","level":"{}","score":{:.3},"mitre":[{}],"detail":"{}"}}"#,
-                v.signature,
-                v.level,
-                v.score,
-                v.mitre
-                    .iter()
-                    .map(|m| format!("\"{m}\""))
-                    .collect::<Vec<_>>()
-                    .join(","),
-                v.detail.as_deref().unwrap_or("").replace('"', "\\\"")
+                "{}",
+                serde_json::json!({
+                    "signature": v.signature,
+                    "level": v.level.to_string(),
+                    "score": v.score,
+                    "mitre": v.mitre,
+                    "detail": v.detail.as_deref().unwrap_or(""),
+                })
             );
         }
     } else {
@@ -865,30 +921,62 @@ fn update_once(
     hash_db: &std::path::Path,
 ) -> Result<(usize, u64)> {
     use aether_intel::{Feed, IntelStore};
-    let (code, body) = http_get(url)?;
-    if code != 200 {
-        return Err(anyhow::anyhow!("feed fetch HTTP {code}"));
-    }
-    let feed = Feed::from_json(&body).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let mut store =
-        IntelStore::load_or_new(store_path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    // apply_signed enforces the Ed25519 trust anchor + anti-rollback. Integrity
-    // holds even over plain HTTP, because a forged feed can't be signed.
-    let added = store
-        .apply_signed(&feed)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    if added > 0 {
-        store
-            .save(store_path)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        // Merge the store's sha256 IOCs into the on-disk hash DB and dedup.
-        let base = std::fs::read_to_string(hash_db).unwrap_or_default();
-        let mut lines: std::collections::BTreeSet<String> =
-            base.lines().map(|s| s.to_string()).collect();
-        for l in store.export_hashdb().lines() {
-            lines.insert(l.to_string());
+    use std::io::{Read, Write};
+
+    const MAX_FEED_BYTES: u64 = 256 * 1024 * 1024;
+    let response = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(180))
+        .call()?;
+    anyhow::ensure!(
+        response.status() == 200,
+        "feed fetch HTTP {}",
+        response.status()
+    );
+    let mut body = String::new();
+    response
+        .into_reader()
+        .take(MAX_FEED_BYTES + 1)
+        .read_to_string(&mut body)?;
+    anyhow::ensure!(body.len() as u64 <= MAX_FEED_BYTES, "feed exceeds 256 MiB");
+    let feed = Feed::from_json(&body)?;
+    drop(body);
+    let mut store = IntelStore::load_or_new(store_path)?;
+    let current = store.version;
+    let added = store.apply_signed(&feed)?;
+    if added != 0 {
+        let base = match std::fs::read_to_string(hash_db) {
+            Ok(base) => base,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(err).context("reading hash database before update"),
+        };
+        let exported = store.export_hashdb();
+        let mut lines = std::collections::BTreeMap::new();
+        for line in base.lines().chain(exported.lines()) {
+            let trimmed = line.trim();
+            if let Some(hash) = trimmed.split_whitespace().next() {
+                lines.insert(hash.to_ascii_lowercase(), trimmed);
+            }
         }
-        let _ = std::fs::write(hash_db, lines.into_iter().collect::<Vec<_>>().join("\n"));
+        let parent = hash_db
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+        {
+            let mut writer = std::io::BufWriter::new(tmp.as_file_mut());
+            for line in lines.values() {
+                writeln!(writer, "{line}")?;
+            }
+            writer.flush()?;
+        }
+        if let Ok(meta) = std::fs::metadata(hash_db) {
+            tmp.as_file().set_permissions(meta.permissions())?;
+        }
+        tmp.as_file().sync_all()?;
+        tmp.persist(hash_db)?;
+    }
+    if current != store.version {
+        store.save(store_path)?;
     }
     Ok((added, store.version))
 }
@@ -918,6 +1006,7 @@ fn run_update(config: Config, args: UpdateArgs) -> Result<ExitCode> {
         match update_once(&url, &store_path, &hash_db) {
             Ok((0, ver)) => println!("up to date (feed v{ver})"),
             Ok((added, ver)) => println!("updated: +{added} indicators, now at feed v{ver}"),
+            Err(e) if !args.watch => return Err(e).context("update failed"),
             Err(e) => eprintln!("update failed: {e}"),
         }
         if !args.watch {
@@ -1051,6 +1140,7 @@ fn run_intel(cmd: IntelCmd) -> Result<ExitCode> {
                 .with_context(|| format!("reading {}", file.display()))?;
             let feed = match format.as_str() {
                 "threatfox" => Feed::from_threatfox_csv(&text, feed_version),
+                "threatfox-json" => Feed::from_threatfox_json(&text, feed_version),
                 "sha256" => Feed::from_sha256_list(&text, feed_version, &threat),
                 "misp" => Feed::from_misp_json(&text, feed_version, &threat),
                 "urlhaus" => Feed::from_urlhaus_csv(&text, feed_version),
@@ -1059,7 +1149,7 @@ fn run_intel(cmd: IntelCmd) -> Result<ExitCode> {
                 "iplist" => Feed::from_ipv4_list(&text, feed_version, &threat),
                 "domainlist" => Feed::from_domain_list(&text, feed_version, &threat),
                 other => return Err(anyhow::anyhow!(
-                    "unknown format '{other}' (threatfox|sha256|misp|urlhaus|feodo|malwarebazaar|iplist|domainlist)"
+                    "unknown format '{other}' (threatfox|threatfox-json|sha256|misp|urlhaus|feodo|malwarebazaar|iplist|domainlist)"
                 )),
             }
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;

@@ -84,7 +84,7 @@ impl Scanner {
             let cfg = &config;
             let h = sc.spawn(move || -> Result<HashDb> {
                 let db = if cfg.engines.hash {
-                    HashDb::load(&cfg.engines.hash_db)?
+                    HashDb::load_with_bundled(&cfg.engines.hash_db)?
                 } else {
                     HashDb::empty()
                 };
@@ -527,18 +527,49 @@ impl Scanner {
 
     /// Scan one file from disk, honoring the configured size limit.
     pub fn scan_file(&self, path: &Path) -> Result<ScanReport> {
-        let meta = std::fs::metadata(path).map_err(|source| Error::Io {
+        use std::io::Read;
+        let io_error = |source| Error::Io {
             path: path.to_path_buf(),
             source,
-        })?;
-
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let file = options.open(path).map_err(io_error)?;
+        let meta = file.metadata().map_err(io_error)?;
+        if !meta.is_file() {
+            return Err(io_error(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "scan target is not a regular file",
+            )));
+        }
         let limit = self.config.scan.max_file_size;
-        if limit > 0 && meta.len() > limit {
-            tracing::debug!(path = %path.display(), size = meta.len(), "skipping: over size limit");
+        let mut data = Vec::new();
+        let size = if limit != 0 && meta.len() > limit {
+            meta.len()
+        } else {
+            // A watched file can change while being read. Copy through a
+            // bounded reader instead of mapping memory another process owns.
+            let read_limit = if limit == 0 {
+                u64::MAX
+            } else {
+                limit.saturating_add(1)
+            };
+            file.take(read_limit)
+                .read_to_end(&mut data)
+                .map_err(io_error)?;
+            data.len() as u64
+        };
+        if limit != 0 && size > limit {
+            tracing::debug!(path = %path.display(), size, "skipping: over size limit");
             return Ok(ScanReport {
                 path: path.to_path_buf(),
                 hashes: aether_common::FileHashes {
-                    size: meta.len(),
+                    size,
                     ..Default::default()
                 },
                 verdicts: vec![],
@@ -546,28 +577,6 @@ impl Scanner {
             });
         }
 
-        // For large samples, memory-map to avoid copying the whole file into a
-        // heap buffer (keeps RSS flat when scanning multi-hundred-MB files).
-        // Small files and empty files take the simple read path (mmap of zero
-        // length is invalid on some platforms).
-        const MMAP_THRESHOLD: u64 = 2 * 1024 * 1024;
-        if meta.len() >= MMAP_THRESHOLD {
-            let file = std::fs::File::open(path).map_err(|source| Error::Io {
-                path: path.to_path_buf(),
-                source,
-            })?;
-            // SAFETY: the mapping is read-only and lives only for this call; we
-            // never mutate it and drop it before returning the (owned) report.
-            match unsafe { memmap2::Mmap::map(&file) } {
-                Ok(mmap) => return Ok(self.scan_bytes(path, &mmap)),
-                Err(e) => tracing::debug!(error = %e, "mmap failed; falling back to read"),
-            }
-        }
-
-        let data = std::fs::read(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
         Ok(self.scan_bytes(path, &data))
     }
 

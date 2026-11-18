@@ -88,6 +88,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn temporary_payload_requires_same_child_and_order() {
+        let mut events = Event::from_json(
+            r#"[
+            {"pid":12,"action":"file_write","path":"/tmp/example"},
+            {"pid":12,"action":"process_spawn","child_pid":34,"image":"/tmp/example"},
+            {"pid":34,"action":"net_connect","remote":"8.8.8.8","port":443}
+        ]"#,
+        )
+        .unwrap();
+        let engine = BehaviorEngine::new();
+        let matched = |events: &[Event]| {
+            engine.analyze(events).verdicts.iter().any(|v| {
+                v.signature == "behavior.temporary_payload_connection"
+                    && v.level == ThreatLevel::Suspicious
+            })
+        };
+        assert!(matched(&events));
+        events[2].pid = 35;
+        assert!(!matched(&events));
+        events[2].pid = 34;
+        events.swap(1, 2);
+        assert!(!matched(&events));
+    }
+
+    #[test]
     fn report_aggregates_techniques() {
         let json = r#"[
             {"pid":1,"action":"process_spawn","child_pid":20,"image":"winword.exe"},

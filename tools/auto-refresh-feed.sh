@@ -20,7 +20,7 @@ log() { echo "[$(date -u +%FT%TZ)] $*"; }
 export FEED_VERSION="$(date +%s)"
 
 log "fetching fresh intel from all sources…"
-./tools/update-intel.sh        || log "warn: intel fetch had warnings (some sources unreachable?)"
+./tools/update-intel.sh        || { log "ERROR: signature refresh failed"; exit 1; }
 python3 tools/import_feeds.py   2>/dev/null || log "warn: IP/domain feeds skipped"
 
 log "signing + publishing the feed (offline key)…"

@@ -21,8 +21,11 @@ python3 tools/gen_av_dataset.py --n 6000 --format alpaca \
 # -> 5400 train + 600 eval, Alpaca {instruction,input,output}
 ```
 
-Every record is `artifact -> "Verdict | MITRE | reason"`. Add your own real
-samples (one JSONL line each) - that's where the biggest accuracy gains are.
+The generator includes structured behavior summaries in the same format
+used by `aether behavior --aegis`. Evaluation reserves distinct detector
+combinations for this task. Use a separate corpus of consenting, reviewed
+benign and malicious traces for real-world precision and recall. The
+checked-in GGUF weights are unchanged by dataset generation.
 
 ## 2. Fine-tune (Unsloth / QLoRA)
 

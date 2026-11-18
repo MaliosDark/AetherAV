@@ -65,6 +65,7 @@ pub fn evaluate(events: &[Event], graph: &BehaviorGraph) -> Vec<Verdict> {
     verdicts.extend(ransomware(events, graph));
     verdicts.extend(c2_beacon(events, graph));
     verdicts.extend(persistence(events));
+    verdicts.extend(temporary_payload_connection(events));
     verdicts
 }
 
@@ -288,6 +289,65 @@ fn c2_beacon(events: &[Event], graph: &BehaviorGraph) -> Option<Verdict> {
             hits.join(", ")
         ),
     ))
+}
+
+/// Correlate a file write, execution of that exact file by the writer, and an
+/// external connection from the new child. Use a bounded event-distance because
+/// sensor timestamps have source-defined units.
+fn temporary_payload_connection(events: &[Event]) -> Option<Verdict> {
+    const WINDOW: usize = 128;
+    let mut writes = HashMap::new();
+    let mut spawned = HashMap::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match &event.action {
+            Action::FileWrite { path, .. }
+                if ["/tmp/", "/var/tmp/", "/dev/shm/"]
+                    .iter()
+                    .any(|prefix| path.starts_with(*prefix)) =>
+            {
+                writes.insert((event.pid, path.as_str()), index);
+            }
+            Action::FileDelete { path } => {
+                writes.remove(&(event.pid, path.as_str()));
+            }
+            Action::ProcessSpawn {
+                child_pid, image, ..
+            } => {
+                spawned.remove(child_pid);
+                if let Some(wrote_at) = writes.remove(&(event.pid, image.as_str())) {
+                    if index - wrote_at <= WINDOW {
+                        spawned.insert(*child_pid, wrote_at);
+                    }
+                }
+            }
+            Action::NetConnect { remote, port }
+                if *port != 0
+                    && spawned
+                        .get(&event.pid)
+                        .is_some_and(|wrote_at| index - wrote_at <= WINDOW)
+                    && remote.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| {
+                        !ip.is_private()
+                            && !ip.is_loopback()
+                            && !ip.is_link_local()
+                            && !ip.is_multicast()
+                            && !ip.is_unspecified()
+                            && !ip.is_documentation()
+                            && !ip.is_broadcast()
+                    }) =>
+            {
+                return Some(verdict(
+                    ThreatLevel::Suspicious,
+                    "behavior.temporary_payload_connection",
+                    0.8,
+                    &[],
+                    format!("process {} executed a newly written temporary file and connected externally", event.pid),
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// T1547.001 / T1053.005 - autostart registry keys or scheduled-task creation.

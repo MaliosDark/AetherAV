@@ -11,7 +11,8 @@ pub mod hmac;
 
 use aether_common::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::Path;
 
 /// Kind of indicator.
@@ -32,8 +33,7 @@ pub struct Ioc {
     pub value: String,
     #[serde(default)]
     pub threat: String,
-    /// Store version at which this indicator first entered. Lets the server build
-    /// incremental (delta) feeds - clients pull only IOCs newer than they have.
+    /// Latest store version at which the indicator or its label changed.
     /// Not part of `canonical()`, so it never affects the signature.
     #[serde(default)]
     pub ver: u64,
@@ -126,6 +126,19 @@ impl Feed {
         format!("v{}\n{}", self.version, lines.join("\n")).into_bytes()
     }
 
+    /// The legacy line-based signature format relies on unambiguous fields
+    /// and unique normalized keys. Check the same invariants on all verifiers.
+    fn valid_signed_fields(&self) -> bool {
+        let mut keys = HashSet::with_capacity(self.iocs.len());
+        self.iocs.iter().all(|ioc| {
+            !ioc.value.is_empty()
+                && !ioc.value.contains('|')
+                && !ioc.value.chars().any(char::is_control)
+                && !ioc.threat.chars().any(char::is_control)
+                && keys.insert(ioc.key())
+        })
+    }
+
     /// Authenticate the feed with a shared key.
     pub fn sign(&mut self, key: &[u8]) {
         self.mac = Some(hex::encode(hmac::hmac_sha256(key, &self.canonical())));
@@ -133,6 +146,9 @@ impl Feed {
 
     /// Verify the feed's MAC. Returns `false` if unsigned or tampered.
     pub fn verify(&self, key: &[u8]) -> bool {
+        if !self.valid_signed_fields() {
+            return false;
+        }
         match &self.mac {
             Some(mac_hex) => {
                 let expected = hmac::hmac_sha256(key, &self.canonical());
@@ -158,6 +174,9 @@ impl Feed {
     /// malformed, or tampered.
     pub fn verify_ed25519(&self, pubkey_hex: &str) -> bool {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        if !self.valid_signed_fields() {
+            return false;
+        }
         let Some(sig_hex) = &self.sig else {
             return false;
         };
@@ -279,6 +298,59 @@ impl Feed {
         Ok(Feed::new(version, iocs))
     }
 
+    /// Import high-confidence SHA-256 indicators from the ThreatFox API.
+    /// Network indicators require expiry and are intentionally kept out of
+    /// this append-only refresh path.
+    pub fn from_threatfox_json(text: &str, version: u64) -> Result<Feed> {
+        #[derive(Deserialize)]
+        struct Response {
+            query_status: String,
+            data: Option<Vec<Record>>,
+        }
+
+        #[derive(Deserialize)]
+        struct Record {
+            ioc: String,
+            ioc_type: String,
+            confidence_level: u8,
+            malware_printable: Option<String>,
+        }
+
+        let response: Response = serde_json::from_str(text)
+            .map_err(|e| Error::Config(format!("ThreatFox response: {e}")))?;
+        if response.query_status != "ok" {
+            return Err(Error::Config("ThreatFox query did not succeed".into()));
+        }
+        let records = response
+            .data
+            .ok_or_else(|| Error::Config("ThreatFox response missing records".into()))?;
+        let mut seen = HashSet::new();
+        let iocs = records
+            .into_iter()
+            .filter_map(|record| {
+                if record.ioc_type != "sha256_hash"
+                    || !(75..=100).contains(&record.confidence_level)
+                {
+                    return None;
+                }
+                let value = record.ioc.trim().to_ascii_lowercase();
+                if !valid_file_sha256(&value) || !seen.insert(value.clone()) {
+                    return None;
+                }
+                Some(Ioc {
+                    ver: 0,
+                    kind: IocKind::Sha256,
+                    value,
+                    threat: signature_label(
+                        record.malware_printable.as_deref(),
+                        "ThreatFox.Sample",
+                    ),
+                })
+            })
+            .collect();
+        Ok(Feed::new(version, iocs))
+    }
+
     /// Import the abuse.ch **URLhaus** CSV (malware-distribution URLs).
     /// Columns: `id, dateadded, url, url_status, last_online, threat, …`.
     pub fn from_urlhaus_csv(text: &str, version: u64) -> Result<Feed> {
@@ -349,18 +421,10 @@ impl Feed {
                 continue;
             }
             let sha = f[1].trim().to_lowercase();
-            if sha.len() != 64
-                || sha == "sha256_hash"
-                || !sha.bytes().all(|b| b.is_ascii_hexdigit())
-            {
+            if !valid_file_sha256(&sha) {
                 continue;
             }
-            let threat = f
-                .get(8)
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty() && *s != "n/a")
-                .unwrap_or("MalwareBazaar.Sample")
-                .to_string();
+            let threat = signature_label(f.get(8).map(String::as_str), "MalwareBazaar.Sample");
             iocs.push(Ioc {
                 ver: 0,
                 kind: IocKind::Sha256,
@@ -499,11 +563,28 @@ impl IntelStore {
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        let text = serde_json::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))?;
-        std::fs::write(path, text).map_err(|source| Error::Io {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let io_error = |source| Error::Io {
             path: path.to_path_buf(),
             source,
-        })
+        };
+        let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(io_error)?;
+        let mut writer = std::io::BufWriter::new(tmp.as_file_mut());
+        serde_json::to_writer(&mut writer, self)
+            .map_err(|e| Error::Config(format!("store write: {e}")))?;
+        writer.flush().map_err(io_error)?;
+        drop(writer);
+        if let Ok(meta) = std::fs::metadata(path) {
+            tmp.as_file()
+                .set_permissions(meta.permissions())
+                .map_err(io_error)?;
+        }
+        tmp.as_file().sync_all().map_err(io_error)?;
+        tmp.persist(path).map_err(|e| io_error(e.error))?;
+        Ok(())
     }
 
     /// Merge a feed (delta update) into the store. If `key` is provided, the
@@ -520,15 +601,17 @@ impl IntelStore {
         let mut changed = 0;
         for ioc in &feed.iocs {
             let k = ioc.key();
-            // Stamp a brand-new indicator with this feed's version; keep the
-            // original version for one we already have (incl. legacy ver==0, the
-            // pre-delta baseline) so re-imports never wrongly look "new" in deltas.
-            let first_ver = match self.iocs.get(&k) {
-                Some(existing) => existing.ver,
-                None => feed.version,
+            let version = match self.iocs.get(&k) {
+                Some(existing) if existing.threat == ioc.threat => {
+                    // Duplicate entries count as applied without changing the delta stamp.
+                    changed += 1;
+                    continue;
+                }
+                Some(existing) if existing.ver > feed.version => continue,
+                _ => feed.version,
             };
             let mut ioc = ioc.clone();
-            ioc.ver = first_ver;
+            ioc.ver = version;
             self.iocs.insert(k, ioc);
             changed += 1;
         }
@@ -545,7 +628,11 @@ impl IntelStore {
     /// signature from the trusted key, AND its version must be newer than what
     /// we already have (anti-rollback). This is the safe path for auto-update.
     pub fn apply_signed(&mut self, feed: &Feed) -> Result<usize> {
-        if !feed.verify_trusted() {
+        self.apply_verified(feed, TRUSTED_FEED_PUBKEY)
+    }
+
+    fn apply_verified(&mut self, feed: &Feed, pubkey: &str) -> Result<usize> {
+        if !feed.verify_ed25519(pubkey) {
             return Err(Error::Config(
                 "untrusted feed signature - update rejected".into(),
             ));
@@ -628,14 +715,10 @@ impl IntelStore {
         let mut lines: Vec<String> = self
             .iocs
             .values()
-            .filter(|i| i.kind == IocKind::Sha256)
+            .filter(|i| i.kind == IocKind::Sha256 && valid_file_sha256(&i.value))
             .map(|i| {
-                let name = if i.threat.is_empty() {
-                    "Intel.Unknown"
-                } else {
-                    &i.threat
-                };
-                format!("{} {}", i.value.to_lowercase(), name)
+                let name = signature_label(Some(&i.threat), "Intel.Unknown");
+                format!("{} {}", i.value.to_ascii_lowercase(), name)
             })
             .collect();
         lines.sort();
@@ -643,9 +726,52 @@ impl IntelStore {
     }
 }
 
+fn valid_file_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|b| b.is_ascii_hexdigit())
+        && !value.bytes().all(|b| b == b'0')
+        && !value.eq_ignore_ascii_case(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+}
+
+fn signature_label(raw: Option<&str>, fallback: &str) -> String {
+    let Some(raw) = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("n/a"))
+    else {
+        return fallback.to_string();
+    };
+    let cleaned: String = raw.chars().filter(|c| !c.is_control()).take(128).collect();
+    if cleaned.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn threatfox_json_requires_valid_high_confidence_file_indicators() {
+        let hash = "a".repeat(64);
+        let text = serde_json::json!({
+            "query_status": "ok",
+            "data": [
+                {"ioc":hash, "ioc_type":"sha256_hash", "confidence_level":90, "malware_printable":"Family"},
+                {"ioc":hash, "ioc_type":"sha256_hash", "confidence_level":90},
+                {"ioc":"b".repeat(64), "ioc_type":"sha256_hash", "confidence_level":40},
+                {"ioc":"8.8.8.8:443", "ioc_type":"ip:port", "confidence_level":99},
+                {"ioc":"0".repeat(64), "ioc_type":"sha256_hash", "confidence_level":100}
+            ]
+        });
+        let feed = Feed::from_threatfox_json(&text.to_string(), 1).unwrap();
+        assert_eq!(feed.iocs.len(), 1);
+        assert_eq!(feed.iocs[0].threat, "Family");
+        assert!(Feed::from_threatfox_json(r#"{"query_status":"error"}"#, 1).is_err());
+    }
 
     #[test]
     fn parses_ip_and_domain_lists() {
@@ -891,5 +1017,44 @@ not-a-hash\n";
         assert_eq!(feed.iocs.len(), 2); // comment skipped
         assert_eq!(feed.version, 5);
         assert!(feed.iocs.iter().all(|i| i.threat == "APT.Demo"));
+    }
+
+    #[test]
+    fn ed25519_rejects_modified_and_ambiguous_feeds() {
+        let seed = [42; 32];
+        let key = public_hex(&seed);
+        let mut feed = sample_feed(1);
+        feed.sign_ed25519(&seed);
+        assert!(feed.verify_ed25519(&key));
+        feed.iocs[0].threat.push_str(" changed");
+        assert!(!feed.verify_ed25519(&key));
+
+        feed.iocs[0].threat = "invalid\nlabel".into();
+        feed.sign_ed25519(&seed);
+        assert!(!feed.verify_ed25519(&key));
+
+        let mut feed = sample_feed(1);
+        feed.iocs.push(feed.iocs[0].clone());
+        feed.sign_ed25519(&seed);
+        assert!(!feed.verify_ed25519(&key));
+    }
+
+    #[test]
+    fn signed_deltas_preserve_rollback_protection_and_publish_label_changes() {
+        let seed = [42; 32];
+        let key = public_hex(&seed);
+        let mut store = IntelStore::new();
+        let mut feed = sample_feed(5);
+        assert!(store.apply_verified(&feed, &key).is_err());
+        feed.sign_ed25519(&seed);
+        assert_eq!(store.apply_verified(&feed, &key).unwrap(), 2);
+        assert_eq!(store.apply_verified(&feed, &key).unwrap(), 0);
+
+        let mut feed = sample_feed(6);
+        feed.iocs[0].threat = "Updated family".into();
+        feed.sign_ed25519(&seed);
+        assert_eq!(store.apply_verified(&feed, &key).unwrap(), 2);
+        assert_eq!(store.version, 6);
+        assert_eq!(store.to_feed_since(5, 6).iocs.len(), 1);
     }
 }

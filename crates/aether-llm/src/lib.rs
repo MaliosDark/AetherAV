@@ -11,7 +11,11 @@
 //! a producer of `verdict | technique | reason` lines.
 
 use aether_common::{EngineKind, ThreatLevel, Verdict};
+use std::io::Read;
+use std::net::SocketAddr;
 use std::path::PathBuf;
+
+const MAX_COMPLETION_BYTES: u64 = 16 * 1024;
 
 /// Configuration for the embedded model.
 #[derive(Debug, Clone)]
@@ -84,10 +88,14 @@ pub struct LlmClassifier {
 impl LlmClassifier {
     pub fn new(cfg: LlmConfig) -> LlmClassifier {
         // A persistent server doesn't need the model file locally; the CLI path does.
-        let has_backend = !cfg.server_url.is_empty() || cfg.model.exists();
+        let has_backend = if cfg.server_url.is_empty() {
+            cfg.model.is_file()
+        } else {
+            is_loopback_endpoint(&cfg.server_url)
+        };
         let mut available = cfg.enabled && has_backend;
         if cfg.enabled && !has_backend {
-            tracing::warn!(model = %cfg.model.display(), "LLM engine enabled but no model/server; inert");
+            tracing::warn!(model = %cfg.model.display(), "LLM requires a model file or an explicit numeric loopback HTTP endpoint");
         }
         // Auto-tune: on a weak host, skip CPU inference so scans stay snappy.
         if available && cfg.auto_tune && cfg.server_url.is_empty() {
@@ -106,10 +114,7 @@ impl LlmClassifier {
     /// The instruction prompt - must mirror the training template so the model
     /// answers in the `Verdict | MITRE | reason` form the parser expects.
     fn prompt(&self, artifact: &str) -> String {
-        let mut a = artifact.trim().to_string();
-        if a.len() > self.cfg.max_chars {
-            a.truncate(self.cfg.max_chars);
-        }
+        let a: String = artifact.trim().chars().take(self.cfg.max_chars).collect();
         format!(
             "Classify this command line. Reply: verdict, MITRE technique (or -), one-line reason.\n{a}\n"
         )
@@ -121,16 +126,39 @@ impl LlmClassifier {
         if !self.available {
             return None;
         }
+        self.classify_prompt(&self.prompt(artifact))
+    }
+
+    /// Review machine-generated behavioral evidence without raw trace fields.
+    /// The completion is advisory because the Aegis training set is oriented
+    /// toward command lines, and the model cannot establish a malicious verdict.
+    pub fn review_behavior(&self, evidence: &str) -> Option<Verdict> {
+        let evidence: String = evidence.chars().take(self.cfg.max_chars).collect();
+        let prompt = format!(
+            "Review these local behavioral observations for triage. Reply: verdict | - | one-line reason.\n{evidence}\n"
+        );
+        let mut verdict = self.classify_prompt(&prompt)?;
+        verdict.level = ThreatLevel::Suspicious;
+        verdict.signature = "aegis.behavior_review".into();
+        verdict.score = 0.55;
+        verdict.mitre.clear();
+        Some(verdict)
+    }
+
+    fn classify_prompt(&self, prompt: &str) -> Option<Verdict> {
+        if !self.available {
+            return None;
+        }
         let text = if self.cfg.server_url.is_empty() {
-            self.classify_cli(artifact)?
+            self.classify_cli(prompt)?
         } else {
-            self.classify_server(artifact)?
+            self.classify_server(prompt)?
         };
         parse_verdict(&text)
     }
 
     /// Spawn a fresh llama.cpp process for one classification (no server).
-    fn classify_cli(&self, artifact: &str) -> Option<String> {
+    fn classify_cli(&self, prompt: &str) -> Option<String> {
         let out = aether_common::quiet_command(&self.cfg.runner)
             .arg("-m")
             .arg(&self.cfg.model)
@@ -142,31 +170,61 @@ impl LlmClassifier {
                 "--no-display-prompt",
                 "-p",
             ])
-            .arg(self.prompt(artifact))
+            .arg(prompt)
             .output()
             .ok()?;
-        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+        if !out.status.success() || out.stdout.len() as u64 > MAX_COMPLETION_BYTES {
+            return None;
+        }
+        String::from_utf8(out.stdout).ok()
     }
 
     /// Send the prompt to a persistent llama.cpp server (`/completion`). The
     /// model stays resident, so there is no per-call load - ideal on HDDs.
-    fn classify_server(&self, artifact: &str) -> Option<String> {
+    fn classify_server(&self, prompt: &str) -> Option<String> {
         let url = format!("{}/completion", self.cfg.server_url.trim_end_matches('/'));
         let body = serde_json::json!({
-            "prompt": self.prompt(artifact),
+            "prompt": prompt,
             "n_predict": self.cfg.max_tokens,
             "temperature": 0.0,
             "stop": ["\n", "[end of text]", "</s>"],
         });
-        let resp = ureq::post(&url)
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .try_proxy_from_env(false)
+            .build();
+        let resp = agent
+            .post(&url)
             .timeout(std::time::Duration::from_secs(20))
             .send_json(body)
             .ok()?;
-        let v: serde_json::Value = resp.into_json().ok()?;
+        let mut bytes = Vec::new();
+        resp.into_reader()
+            .take(MAX_COMPLETION_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > MAX_COMPLETION_BYTES {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
         v.get("content")
             .and_then(|c| c.as_str())
             .map(str::to_string)
     }
+}
+
+fn is_loopback_endpoint(url: &str) -> bool {
+    url.strip_prefix("http://")
+        .and_then(|address| address.trim_end_matches('/').parse::<SocketAddr>().ok())
+        .is_some_and(|address| address.ip().is_loopback() && address.port() != 0)
+}
+
+fn valid_technique(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    matches!(bytes.len(), 5 | 9)
+        && bytes[0] == b'T'
+        && bytes[1..5].iter().all(u8::is_ascii_digit)
+        && (bytes.len() == 5 || (bytes[5] == b'.' && bytes[6..].iter().all(u8::is_ascii_digit)))
 }
 
 /// Parse a model completion into a [`Verdict`]. Scans for a
@@ -188,7 +246,8 @@ pub fn parse_verdict(output: &str) -> Option<Verdict> {
             .map(|m| {
                 m.split([',', ' '])
                     .map(str::trim)
-                    .filter(|t| t.starts_with('T') && t.len() >= 3)
+                    .filter(|t| valid_technique(t))
+                    .take(8)
                     .map(String::from)
                     .collect()
             })
@@ -200,7 +259,12 @@ pub fn parse_verdict(output: &str) -> Option<Verdict> {
             // strip llama.cpp end-of-generation markers from the tail.
             .replace("[end of text]", "")
             .replace("</s>", "");
-        let reason = reason.trim();
+        let reason: String = reason
+            .trim()
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(400)
+            .collect();
         return Some(Verdict {
             engine: EngineKind::Llm,
             level,
@@ -249,6 +313,21 @@ mod tests {
         let v =
             parse_verdict("Malicious | T1486, T1490 | ransomware + recovery inhibition").unwrap();
         assert_eq!(v.mitre, vec!["T1486".to_string(), "T1490".to_string()]);
+    }
+
+    #[test]
+    fn truncates_at_unicode_boundaries_and_validates_local_server() {
+        let c = LlmClassifier::new(LlmConfig {
+            max_chars: 2,
+            ..Default::default()
+        });
+        assert!(c.prompt("a🙂ét").contains("a🙂"));
+        assert!(is_loopback_endpoint("http://127.0.0.1:8080/"));
+        assert!(is_loopback_endpoint("http://[::1]:8080"));
+        assert!(!is_loopback_endpoint("http://127.0.0.1:8080@192.0.2.1"));
+        assert!(!is_loopback_endpoint("http://192.0.2.1:8080"));
+        let v = parse_verdict("Malicious | TA123, T1059.001, T1234.x03 | test").unwrap();
+        assert_eq!(v.mitre, ["T1059.001"]);
     }
 
     #[test]

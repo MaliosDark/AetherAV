@@ -6,6 +6,7 @@
 //! reuse one compiled `Rules` object across all scanned files.
 
 use aether_common::{Error, Result};
+use rsa as _; // Enable the RSA verification feature required by YARA-X.
 use std::path::Path;
 use walkdir::WalkDir;
 
