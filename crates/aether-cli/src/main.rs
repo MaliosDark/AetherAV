@@ -940,6 +940,17 @@ fn update_once(
     anyhow::ensure!(body.len() as u64 <= MAX_FEED_BYTES, "feed exceeds 256 MiB");
     let feed = Feed::from_json(&body)?;
     drop(body);
+    // Serialize updates before reading the stored version so an older feed
+    // cannot overwrite a newer one applied by a concurrent updater.
+    let mut lock_path = store_path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    let update_lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .context("opening the signature update lock")?;
+    update_lock.lock().context("locking signature updates")?;
     let mut store = IntelStore::load_or_new(store_path)?;
     let current = store.version;
     let added = store.apply_signed(&feed)?;

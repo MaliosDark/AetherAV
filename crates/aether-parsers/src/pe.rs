@@ -107,10 +107,8 @@ pub(crate) fn extract_cns(der: &[u8]) -> Vec<String> {
                     0x0c | 0x13 | 0x16 => String::from_utf8_lossy(val).to_string(), // UTF8 / Printable / IA5
                     0x1e => {
                         // BMPString (UTF-16BE)
-                        let u: Vec<u16> = val
-                            .chunks_exact(2)
-                            .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                            .collect();
+                        let (pairs, _) = val.as_chunks::<2>();
+                        let u: Vec<u16> = pairs.iter().copied().map(u16::from_be_bytes).collect();
                         String::from_utf16_lossy(&u)
                     }
                     _ => String::new(),
