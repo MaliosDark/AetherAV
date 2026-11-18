@@ -28,7 +28,8 @@ pub mod timestomp;
 use aether_behavior::event::{Action, Event};
 use aether_behavior::BehaviorEngine;
 use aether_common::Verdict;
-use std::collections::HashSet;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 
 /// Cross-platform real-time file monitor (inotify on Linux, FSEvents on macOS,
 /// ReadDirectoryChanges on Windows - all via the `notify` crate). Yields the
@@ -42,11 +43,20 @@ pub struct FileWatcher {
 impl FileWatcher {
     /// Begin watching `dir` recursively for create/modify events.
     pub fn watch(dir: &std::path::Path) -> Result<FileWatcher, String> {
+        Self::watch_with_removals(dir, false)
+    }
+
+    pub(crate) fn watch_with_removals(
+        dir: &std::path::Path,
+        removals: bool,
+    ) -> Result<Self, String> {
         use notify::{EventKind, RecursiveMode, Watcher};
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
-                if matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+                if matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_))
+                    || (removals && matches!(ev.kind, EventKind::Remove(_)))
+                {
                     for p in ev.paths {
                         let _ = tx.send(p);
                     }
@@ -98,13 +108,22 @@ pub fn parse_stat(content: &str) -> Option<(String, u32)> {
 /// `ProcessSpawn` event the first time it observes each pid.
 #[derive(Default)]
 pub struct ProcMonitor {
-    seen: HashSet<u32>,
+    #[cfg(target_os = "linux")]
+    seen: HashMap<u32, (u64, u64, u64)>,
     tick: u64,
 }
 
 impl ProcMonitor {
     pub fn new() -> ProcMonitor {
         ProcMonitor::default()
+    }
+
+    /// Start time, executable device and inode from the latest poll.
+    pub fn process_identity(&self, _pid: u32) -> Option<(u64, u64, u64)> {
+        #[cfg(target_os = "linux")]
+        return self.seen.get(&_pid).copied();
+        #[cfg(not(target_os = "linux"))]
+        None
     }
 
     /// Mark the currently-running processes as already-seen, so the next
@@ -123,6 +142,8 @@ impl EventSource for ProcMonitor {
     fn poll(&mut self) -> Vec<Event> {
         self.tick += 1;
         let mut events = Vec::new();
+        use std::os::unix::fs::MetadataExt;
+        let mut live = HashMap::new();
         let Ok(entries) = std::fs::read_dir("/proc") else {
             return events;
         };
@@ -132,22 +153,41 @@ impl EventSource for ProcMonitor {
                 Ok(p) => p,
                 Err(_) => continue, // non-pid entries (e.g. /proc/cpuinfo)
             };
-            if !self.seen.insert(pid) {
-                continue; // already known
+            let root = entry.path();
+            let Ok(stat) = std::fs::read_to_string(root.join("stat")) else {
+                continue;
+            };
+            let Some(start_ticks) = stat
+                .rsplit_once(')')
+                .and_then(|(_, fields)| fields.split_whitespace().nth(19))
+                .and_then(|n| n.parse().ok())
+            else {
+                continue;
+            };
+            let executable = root.join("exe");
+            let (device, inode) =
+                std::fs::metadata(&executable).map_or((0, 0), |m| (m.dev(), m.ino()));
+            let identity = (start_ticks, device, inode);
+            live.insert(pid, identity);
+            if self.seen.get(&pid) == Some(&identity) {
+                continue;
             }
-            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
             let (comm, ppid) = parse_stat(&stat).unwrap_or_else(|| ("?".to_string(), 0));
+            let image = std::fs::read_link(executable)
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or(comm);
             let cmdline = read_cmdline(pid);
             events.push(Event {
                 ts: self.tick,
                 pid: ppid,
                 action: Action::ProcessSpawn {
                     child_pid: pid,
-                    image: comm,
+                    image,
                     cmdline,
                 },
             });
         }
+        self.seen = live;
         events
     }
 
@@ -200,7 +240,11 @@ impl Collector {
 
     /// Behavioral verdicts over the current window.
     pub fn analyze(&self) -> Vec<Verdict> {
-        self.engine.analyze(&self.window).verdicts
+        self.report().verdicts
+    }
+
+    pub fn report(&self) -> aether_behavior::BehaviorReport {
+        self.engine.analyze(&self.window)
     }
 
     pub fn window(&self) -> &[Event] {

@@ -43,6 +43,7 @@ use aether_signatures::yara::YaraEngine;
 pub struct Scanner {
     config: Config,
     hashdb: HashDb,
+    packed_hashdb: Option<aether_signatures::packed::PackedHashDb>,
     #[cfg(feature = "yara")]
     yara: YaraEngine,
     /// ClamAV-style hex pattern engine (`.ndb`); empty if disabled/absent.
@@ -187,9 +188,28 @@ impl Scanner {
             tracing::info!("on-device LLM classifier engine ready");
         }
 
+        let packed_hashdb = if config.engines.hash {
+            config
+                .engines
+                .packed_hash_db
+                .as_ref()
+                .map(|path| {
+                    aether_signatures::packed::PackedHashDb::open(path).map_err(|source| {
+                        Error::Io {
+                            path: path.clone(),
+                            source,
+                        }
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+
         Ok(Scanner {
             config,
             hashdb,
+            packed_hashdb,
             #[cfg(feature = "yara")]
             yara,
             ndb,
@@ -228,6 +248,10 @@ impl Scanner {
     /// Number of hash signatures currently loaded.
     pub fn signature_count(&self) -> usize {
         self.hashdb.len()
+    }
+
+    pub fn packed_signature_count(&self) -> u64 {
+        self.packed_hashdb.as_ref().map_or(0, |db| db.len())
     }
 
     /// Number of compiled YARA-X rules (0 when built without the `yara` feature).
@@ -285,7 +309,18 @@ impl Scanner {
         // --- Engine 1: exact hash match (highest confidence, short-circuits) ---
         // Matches on SHA-256, MD5 or SHA-1 so ClamAV's MD5 DB and legacy IOCs hit.
         if self.config.engines.hash {
-            if let Some(name) = self.hashdb.lookup_any(&hashes) {
+            let name = self.hashdb.lookup_any(&hashes).or_else(|| {
+                let db = self.packed_hashdb.as_ref()?;
+                match db.contains(&hashes.sha256) {
+                    Ok(true) => Some("Packed.SHA256.ExactMatch"),
+                    Ok(false) => None,
+                    Err(error) => {
+                        tracing::warn!(%error, "packed signature lookup failed");
+                        None
+                    }
+                }
+            });
+            if let Some(name) = name {
                 let detail = self.hashdb.curated_source(&hashes.sha256).map_or_else(
                     || "exact hash signature match".to_string(),
                     |source| format!("Exact SHA-256 signature match. Source {source}"),

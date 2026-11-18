@@ -6,6 +6,10 @@ versions (e.g. `2026.1.0`).
 
 ## [Unreleased]
 ### Added
+- Linux executable and fileless memory inspection with redacted Aegis triage.
+- An on-disk SHA-256 catalog, incident signature review, and explicit write approval.
+- SSH correlation for multi-host journal exports, a Linux SSH Sigma subset,
+  and read-only host security auditing.
 - 27 bundled SHA-256 signatures with source links in scan verdicts, plus authenticated
   recent MalwareBazaar and high-confidence ThreatFox hash imports.
 - Behavioral trace correlation for temporary payload execution followed by a

@@ -60,6 +60,12 @@ from cryptography and behavior analysis, not from hiding its code.
 
 ---
 
+## Defensive operations
+
+Linux process inspection, fileless triage, signature approval, multi-host SSH
+correlation and host configuration audits are documented in the
+[defensive operations guide](docs/DEFENSE-OPS.md).
+
 ## Behavioral trace analysis
 
 ```bash

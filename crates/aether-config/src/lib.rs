@@ -54,6 +54,8 @@ pub struct EngineConfig {
     pub hash: bool,
     /// Path to the hash signature database (`<hex sha256> <name>` per line).
     pub hash_db: PathBuf,
+    /// Optional packed index produced from a reviewed SHA-256 catalog.
+    pub packed_hash_db: Option<PathBuf>,
     /// Enable the YARA-X engine.
     pub yara: bool,
     /// Directory containing `.yar` / `.yara` rule files (scanned recursively).
@@ -131,6 +133,7 @@ impl Default for EngineConfig {
         EngineConfig {
             hash: true,
             hash_db: PathBuf::from("assets/signatures/hashes.db"),
+            packed_hash_db: None,
             yara: true,
             yara_rules: PathBuf::from("assets/rules"),
             ndb: true,

@@ -10,6 +10,7 @@ pub mod bloom;
 pub mod fuzzy;
 pub mod hashdb;
 pub mod ndb;
+pub mod packed;
 
 #[cfg(feature = "yara")]
 pub mod yara;

@@ -1,0 +1,11 @@
+{
+  "title": "OpenSSH password failure for an invalid account",
+  "id": "7650b148-846c-4a5b-a56a-319a250fff37",
+  "status": "experimental",
+  "logsource": {"product": "linux", "service": "sshd"},
+  "detection": {
+    "selection": {"Outcome": "failure", "Message|contains": " for invalid user "},
+    "condition": "selection"
+  },
+  "level": "low"
+}

@@ -5,6 +5,9 @@
 //!   aether config init [--output aether.toml]   write a default config file
 //!   aether info                                 show engine/build status
 
+mod defense;
+mod ssh_events;
+
 use aether_common::logging::{self, LogFormat};
 use aether_common::ThreatLevel;
 use aether_config::Config;
@@ -111,6 +114,14 @@ enum Command {
     Signfile(SignfileArgs),
     /// Verify a release artifact's detached signature against the trusted public key.
     Verifyfile(VerifyfileArgs),
+    /// Build a compact exact-match index from a reviewed sorted SHA-256 list.
+    PackSignatures(defense::PackArgs),
+    /// Inspect an analyst-supplied sample and optionally write an approved hash.
+    LearnAttack(defense::LearnAttackArgs),
+    /// Correlate trusted OpenSSH journal exports from multiple hosts.
+    SshEvents(ssh_events::SshEventsArgs),
+    /// Review exported SSH, firewall and administration settings.
+    HostAudit(defense::HostAuditArgs),
     /// Configuration helpers.
     #[command(subcommand)]
     Config(ConfigCmd),
@@ -288,6 +299,9 @@ struct RansomguardArgs {
     /// Vault directory for the snapshot (default: <dir>/.aether-vault).
     #[arg(long)]
     vault: Option<PathBuf>,
+    /// Allow a single snapshot restore after an incident. Default is alert only.
+    #[arg(long)]
+    restore: bool,
 }
 
 #[derive(Debug, Args)]
@@ -492,6 +506,27 @@ struct MonitorArgs {
     /// Optional baseline model to also flag anomalies against.
     #[arg(long, short = 'm')]
     baseline: Option<PathBuf>,
+    /// Scan binaries of observed processes via /proc/PID/exe on Linux.
+    #[arg(long)]
+    scan_executables: bool,
+    /// Inspect already-running executables when monitoring starts.
+    #[arg(long, requires = "scan_executables")]
+    scan_running: bool,
+    /// Inspect observed processes for fileless executable mappings on Linux.
+    #[arg(long)]
+    fileless: bool,
+    /// Emit reviewed-signature candidates when independent engines agree.
+    #[arg(long, requires = "scan_executables")]
+    propose_signatures: bool,
+    /// Ask the configured local Aegis backend to review redacted detector evidence.
+    #[arg(long)]
+    aegis: bool,
+    /// Emit SIEM-compatible JSON Lines instead of display messages.
+    #[arg(long)]
+    jsonl: bool,
+    /// Stable host label for multi-server log collection.
+    #[arg(long, default_value = "local")]
+    host: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -537,7 +572,7 @@ fn main() -> ExitCode {
         Command::Update(args) => run_update(config, args),
         Command::ModelUpdate(args) => run_model_update(config, args),
         Command::Serve(args) => run_serve(config, args),
-        Command::Monitor(args) => run_monitor(args),
+        Command::Monitor(args) => run_monitor(config, args),
         Command::Watch(args) => run_watch(config, args),
         Command::Protect(args) => run_protect(config, args),
         Command::Memscan(args) => run_memscan(config, args),
@@ -563,6 +598,10 @@ fn main() -> ExitCode {
         Command::Signfile(args) => run_signfile(args),
         Command::Verifyfile(args) => run_verifyfile(args),
         Command::Submit(args) => run_submit(args),
+        Command::PackSignatures(args) => defense::pack_signatures(args),
+        Command::LearnAttack(args) => defense::learn_attack(config, args),
+        Command::SshEvents(args) => ssh_events::run(args),
+        Command::HostAudit(args) => defense::host_audit(args),
         Command::Config(ConfigCmd::Init { output }) => run_config_init(&config, output),
         Command::Info => run_info(config),
     };
@@ -1219,69 +1258,237 @@ fn run_intel(cmd: IntelCmd) -> Result<ExitCode> {
 }
 
 /// Real-time monitor loop: poll live process events and run the engines.
-fn run_monitor(args: MonitorArgs) -> Result<ExitCode> {
+fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
     use aether_anomaly::{AnomalyEngine, Baseline};
     use aether_realtime::{Collector, EventSource, ProcMonitor};
-    use std::collections::HashSet;
-    use std::time::Duration;
+    use std::collections::{HashSet, VecDeque};
+    use std::time::{Duration, Instant};
 
-    let mut monitor = ProcMonitor::new();
-    monitor.prime(); // ignore the existing process table; report only new spawns
-    let mut collector = Collector::new(10_000);
-
-    let anomaly = match &args.baseline {
-        Some(p) => {
-            let b = Baseline::load_or_new(p).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            Some(AnomalyEngine::new(b))
-        }
-        None => None,
-    };
-
-    println!(
-        "real-time monitor started ({} source) - interval {}ms{}",
-        monitor.name(),
-        args.interval_ms,
-        if args.ticks == 0 {
-            ", until interrupted"
-        } else {
-            ""
-        }
+    anyhow::ensure!(args.interval_ms > 0, "monitor interval must be positive");
+    anyhow::ensure!(
+        !args.host.is_empty() && args.host.len() <= 253 && !args.host.chars().any(char::is_control),
+        "invalid host label"
     );
+    if !cfg!(target_os = "linux") {
+        anyhow::bail!("the live process source is currently available on Linux");
+    }
+    let aegis = args.aegis.then(|| {
+        aether_llm::LlmClassifier::new(aether_llm::LlmConfig {
+            enabled: true,
+            runner: config.engines.llm_runner.clone(),
+            model: config.engines.llm_model.clone(),
+            server_url: config.engines.llm_server_url.clone(),
+            ..Default::default()
+        })
+    });
+    anyhow::ensure!(
+        aegis.as_ref().is_none_or(|model| model.is_available()),
+        "no usable local Aegis backend"
+    );
+    let scanner = if args.scan_executables || args.fileless {
+        config.engines.llm = false;
+        config.engines.plugins = false;
+        config.engines.reputation = false;
+        Some(Scanner::new(config)?)
+    } else {
+        None
+    };
+    let anomaly = args
+        .baseline
+        .as_ref()
+        .map(|p| Baseline::load_or_new(p).map(AnomalyEngine::new))
+        .transpose()?;
+    let mut monitor = ProcMonitor::new();
+    if !args.scan_running {
+        monitor.prime();
+    }
+    let mut pending = VecDeque::new();
+    const PENDING_LIMIT: usize = 4096;
+    const INSPECTIONS_PER_POLL: usize = 32;
+    let mut collector = Collector::new(10_000);
+    let mut printed = HashSet::new();
+    let mut last_review: Option<Instant> = None;
+    tracing::info!(source=monitor.name(), host=%args.host, "real-time monitor started");
 
-    let mut printed: HashSet<String> = HashSet::new();
-    let mut tick = 0u64;
+    let mut tick = 0;
     loop {
         std::thread::sleep(Duration::from_millis(args.interval_ms));
         let events = monitor.poll();
-        let new_count = events.len();
-        collector.ingest(events);
-
-        let mut verdicts = collector.analyze();
-        if let Some(eng) = &anomaly {
-            verdicts.extend(eng.score(collector.window()));
-        }
-        for v in &verdicts {
-            let key = format!("{}|{}", v.signature, v.detail.as_deref().unwrap_or(""));
-            if printed.insert(key) {
-                println!(
-                    "{:<11} [{}] {}",
-                    v.level.to_string(),
-                    v.signature,
-                    v.detail.as_deref().unwrap_or("")
-                );
+        let direct = if let Some(scanner) = &scanner {
+            let mut skipped = 0;
+            for event in &events {
+                if let aether_behavior::Action::ProcessSpawn { child_pid, .. } = event.action {
+                    if let Some(identity) = monitor.process_identity(child_pid) {
+                        if pending.len() < PENDING_LIMIT {
+                            pending.push_back((child_pid, identity));
+                        } else {
+                            skipped += 1;
+                        }
+                    }
+                }
+            }
+            if skipped > 0 {
+                tracing::warn!(skipped, "live inspection queue is full");
+            }
+            let mut batch = Vec::new();
+            while batch.len() < INSPECTIONS_PER_POLL {
+                let Some((pid, key)) = pending.pop_front() else {
+                    break;
+                };
+                if monitor.process_identity(pid) == Some(key) {
+                    batch.push(pid);
+                }
+            }
+            inspect_new_processes(scanner, &batch, &args)
+        } else {
+            Vec::new()
+        };
+        if !events.is_empty() || !direct.is_empty() {
+            collector.ingest(events);
+            let mut report = collector.report();
+            if let Some(engine) = &anomaly {
+                report.verdicts.extend(engine.score(collector.window()));
+            }
+            // Only engine-owned behavior IDs are sent to Aegis. Scan labels
+            // may include names from signatures or entries inside archives.
+            report.verdicts.extend(
+                direct
+                    .iter()
+                    .filter(|v| v.engine == aether_common::EngineKind::Behavioral)
+                    .cloned(),
+            );
+            let summary = (aegis.is_some() && !report.verdicts.is_empty())
+                .then(|| report.triage_summary(collector.window()));
+            report.verdicts.extend(
+                direct
+                    .into_iter()
+                    .filter(|v| v.engine != aether_common::EngineKind::Behavioral),
+            );
+            if printed.len() >= 10_000 {
+                printed.clear();
+            }
+            let mut findings = Vec::new();
+            for verdict in &report.verdicts {
+                let key = (verdict.signature.clone(), verdict.detail.clone());
+                if printed.insert(key) {
+                    findings.push(verdict.clone());
+                }
+            }
+            if !findings.is_empty()
+                && last_review.is_none_or(|t| t.elapsed() >= Duration::from_secs(20))
+            {
+                if let (Some(model), Some(summary)) = (&aegis, summary) {
+                    last_review = Some(Instant::now());
+                    if let Some(verdict) = model.review_behavior(&summary) {
+                        findings.push(verdict);
+                    }
+                }
+            }
+            for verdict in findings {
+                if args.jsonl {
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_micros() as u64);
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema":"aether.security_event.v1",
+                        "event_time_us":timestamp,"host":args.host,"rule_id":verdict.signature,
+                        "severity":verdict.level.to_string().to_ascii_lowercase(),"verdict":verdict})
+                    );
+                } else {
+                    println!(
+                        "{:<11} [{}] {}",
+                        verdict.level,
+                        verdict.signature,
+                        verdict.detail.as_deref().unwrap_or("")
+                    );
+                }
             }
         }
-        if new_count > 0 {
-            println!("· tick {tick}: {new_count} new process event(s)");
-        }
-
         tick += 1;
         if args.ticks != 0 && tick >= args.ticks {
             break;
         }
     }
-    println!("monitor stopped after {tick} ticks");
     Ok(ExitCode::SUCCESS)
+}
+
+fn inspect_new_processes(
+    scanner: &Scanner,
+    pids: &[u32],
+    args: &MonitorArgs,
+) -> Vec<aether_common::Verdict> {
+    use aether_common::{EngineKind, Verdict};
+    let mut output = Vec::new();
+    for &child_pid in pids {
+        let executable = PathBuf::from(format!("/proc/{child_pid}/exe"));
+        if args.scan_executables {
+            match scanner.scan_file(&executable) {
+                Ok(report) => {
+                    if args.propose_signatures && defense::eligible_candidate(&report) {
+                        output.push(
+                            Verdict::suspicious(
+                                EngineKind::Heuristic,
+                                "learning.sha256_candidate",
+                                0.8,
+                            )
+                            .with_detail(format!(
+                                "PID {child_pid}. Proposed SHA-256 {} awaits analyst approval",
+                                report.hashes.sha256
+                            )),
+                        );
+                    }
+                    output.extend(report.verdicts.into_iter().map(|mut v| {
+                        v.detail = Some(format!(
+                            "PID {child_pid}. {}",
+                            v.detail.as_deref().unwrap_or("executable signature")
+                        ));
+                        v
+                    }));
+                }
+                Err(error) => {
+                    tracing::debug!(pid=child_pid,%error,"executable unavailable for scanning")
+                }
+            }
+        }
+        if args.fileless {
+            let Ok(pid) = i32::try_from(child_pid) else {
+                continue;
+            };
+            let findings = aether_realtime::memscan::scan_pid(pid, |bytes| {
+                scanner
+                    .scan_bytes(&executable, bytes)
+                    .verdicts
+                    .into_iter()
+                    .filter(|v| v.level == ThreatLevel::Malicious)
+                    .map(|v| v.signature)
+                    .collect()
+            });
+            for finding in findings {
+                output.push(Verdict {
+                    engine: EngineKind::Behavioral,
+                    level: if finding.matches.is_empty() {
+                        ThreatLevel::Suspicious
+                    } else {
+                        ThreatLevel::Malicious
+                    },
+                    signature: finding.kind.into(),
+                    score: if finding.matches.is_empty() {
+                        0.65
+                    } else {
+                        0.95
+                    },
+                    mitre: Vec::new(),
+                    detail: Some(format!(
+                        "PID {child_pid}. {}. Content matches {}",
+                        finding.detail,
+                        finding.matches.len()
+                    )),
+                });
+            }
+        }
+    }
+    output
 }
 
 /// Watch outbound DNS queries and flag lookups of known-bad domains.
@@ -2298,11 +2505,14 @@ fn run_ransomguard(args: RansomguardArgs) -> Result<ExitCode> {
         args.dir.display()
     );
     let incident = guard
-        .run(|p| tracing::debug!(path = %p.display(), "changed"))
+        .watch(
+            args.restore,
+            |p| tracing::debug!(path = %p.display(), "changed"),
+        )
         .map_err(|e| anyhow::anyhow!(e))?;
     println!("\n⚠ RANSOMWARE DETECTED - {}", incident.reason);
     println!(
-        "   {} files affected · {} restored from snapshot (rollback complete)",
+        "   {} event paths affected · {} files restored from snapshot",
         incident.modified, incident.restored
     );
     Ok(ExitCode::FAILURE)
@@ -2716,7 +2926,14 @@ fn run_config_init(config: &Config, output: PathBuf) -> Result<ExitCode> {
 fn run_info(config: Config) -> Result<ExitCode> {
     let scanner = Scanner::new(config).context("failed to initialize scanner")?;
     println!("AetherAV {}", env!("CARGO_PKG_VERSION"));
-    println!("  hash engine:  {} signatures", scanner.signature_count());
+    println!(
+        "  hash engine:  {} named signatures",
+        scanner.signature_count()
+    );
+    println!(
+        "  packed hash:  {} SHA-256 entries",
+        scanner.packed_signature_count()
+    );
     println!(
         "  yara engine:  {}",
         if cfg!(feature = "yara") {
