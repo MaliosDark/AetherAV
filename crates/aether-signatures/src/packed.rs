@@ -1,8 +1,11 @@
 //! An on-disk SHA-256 index for large, reviewed hash collections.
 //! A prefix table bounds the search to one bucket without mapping the index.
 use std::fs::File;
-use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
+use std::os::unix::fs::FileExt;
 use std::path::Path;
+#[cfg(not(unix))]
 use std::sync::Mutex;
 
 const MAGIC: &[u8; 8] = b"AVSHA256";
@@ -12,14 +15,17 @@ const DIGEST_BYTES: u64 = 32;
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 pub struct PackedHashDb {
+    #[cfg(unix)]
+    file: File,
+    #[cfg(not(unix))]
     file: Mutex<File>,
     offsets: Vec<u64>,
 }
 
 impl PackedHashDb {
     pub fn open(path: &Path) -> io::Result<Self> {
-        let mut file = File::open(path)?;
-        let len = file.metadata()?.len();
+        let mut file = BufReader::new(File::open(path)?);
+        let len = file.get_ref().metadata()?.len();
         let mut tag = [0; 8];
         file.read_exact(&mut tag)?;
         if &tag != MAGIC || len < HEADER_BYTES || !(len - HEADER_BYTES).is_multiple_of(DIGEST_BYTES)
@@ -39,7 +45,11 @@ impl PackedHashDb {
         {
             return Err(invalid("invalid packed SHA-256 index offsets"));
         }
+        let file = file.into_inner();
         Ok(Self {
+            #[cfg(unix)]
+            file,
+            #[cfg(not(unix))]
             file: Mutex::new(file),
             offsets,
         })
@@ -62,15 +72,23 @@ impl PackedHashDb {
         if lo == hi {
             return Ok(false);
         }
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|_| io::Error::other("packed index lock poisoned"))?;
+        #[cfg(unix)]
+        let read_digest = |offset, digest: &mut [u8; 32]| self.file.read_exact_at(digest, offset);
+        #[cfg(not(unix))]
+        let mut read_digest = {
+            let mut file = self
+                .file
+                .lock()
+                .map_err(|_| io::Error::other("packed index lock poisoned"))?;
+            move |offset, digest: &mut [u8; 32]| {
+                file.seek(SeekFrom::Start(offset))?;
+                file.read_exact(digest)
+            }
+        };
         let mut digest = [0; 32];
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            file.seek(SeekFrom::Start(HEADER_BYTES + mid * DIGEST_BYTES))?;
-            file.read_exact(&mut digest)?;
+            read_digest(HEADER_BYTES + mid * DIGEST_BYTES, &mut digest)?;
             match digest.cmp(&target) {
                 std::cmp::Ordering::Less => lo = mid + 1,
                 std::cmp::Ordering::Equal => return Ok(true),
@@ -171,5 +189,26 @@ mod tests {
         assert!(!db.contains(&"e".repeat(64)).unwrap());
         let duplicate = format!("{low}\n{low}\n");
         assert!(write_index(Cursor::new(duplicate), Cursor::new(Vec::new())).is_err());
+    }
+
+    #[test]
+    fn concurrent_reads_find_hits_and_misses_in_one_bucket() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let values = (1..=128).map(|i| format!("{:064x}\n", i * 2));
+        let input: String = values.collect();
+        write_index(Cursor::new(input), BufWriter::new(file.reopen().unwrap())).unwrap();
+        let db = PackedHashDb::open(file.path()).unwrap();
+
+        std::thread::scope(|scope| {
+            for lane in 0..8 {
+                let db = &db;
+                scope.spawn(move || {
+                    for i in (lane + 1..=128).step_by(8) {
+                        assert!(db.contains(&format!("{:064x}", i * 2)).unwrap());
+                        assert!(!db.contains(&format!("{:064x}", i * 2 + 1)).unwrap());
+                    }
+                });
+            }
+        });
     }
 }
