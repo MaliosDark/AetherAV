@@ -6,11 +6,14 @@ versions (e.g. `2026.1.0`).
 
 ## [Unreleased]
 ### Added
-- 19 bundled SHA-256 signatures with source attribution, plus authenticated
+- 27 bundled SHA-256 signatures with source links in scan verdicts, plus authenticated
   recent MalwareBazaar and high-confidence ThreatFox hash imports.
 - Behavioral trace correlation for temporary payload execution followed by a
   network connection, learned baselines and optional local Aegis triage.
-- Behavior-review training records with scenario groups reserved for evaluation.
+- Detect changes to a learned per-program network endpoint profile and link
+  temporary executable activity to Linux cron or systemd autostart changes.
+- Behavior-review training records with typed activity counts and separate
+  evaluation scenarios.
 - 10 detection engines (hash, YARA, ClamAV patterns, parsers, heuristics, static
   ML, Aegis-50M on-device AI, sandbox/emulation, anomaly, threat-intel) + cache.
 - Real-time protection: on-access blocking (fanotify), Process Sentinel, memory

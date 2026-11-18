@@ -11,7 +11,7 @@ pub mod hmac;
 
 use aether_common::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 
@@ -324,28 +324,29 @@ impl Feed {
         let records = response
             .data
             .ok_or_else(|| Error::Config("ThreatFox response missing records".into()))?;
-        let mut seen = HashSet::new();
-        let iocs = records
+        let mut best = BTreeMap::new();
+        for record in records {
+            if record.ioc_type != "sha256_hash" || !(75..=100).contains(&record.confidence_level) {
+                continue;
+            }
+            let digest = record.ioc.trim().to_ascii_lowercase();
+            if !valid_file_sha256(&digest) {
+                continue;
+            }
+            let label = signature_label(record.malware_printable.as_deref(), "ThreatFox.Sample");
+            let candidate = (!generic_hash_label(&label), record.confidence_level, label);
+            let previous = best.entry(digest).or_insert_with(|| candidate.clone());
+            if candidate > *previous {
+                *previous = candidate;
+            }
+        }
+        let iocs = best
             .into_iter()
-            .filter_map(|record| {
-                if record.ioc_type != "sha256_hash"
-                    || !(75..=100).contains(&record.confidence_level)
-                {
-                    return None;
-                }
-                let value = record.ioc.trim().to_ascii_lowercase();
-                if !valid_file_sha256(&value) || !seen.insert(value.clone()) {
-                    return None;
-                }
-                Some(Ioc {
-                    ver: 0,
-                    kind: IocKind::Sha256,
-                    value,
-                    threat: signature_label(
-                        record.malware_printable.as_deref(),
-                        "ThreatFox.Sample",
-                    ),
-                })
+            .map(|(value, (_, _, threat))| Ioc {
+                ver: 0,
+                kind: IocKind::Sha256,
+                value,
+                threat,
             })
             .collect();
         Ok(Feed::new(version, iocs))
@@ -410,7 +411,7 @@ impl Feed {
     /// file_name, file_type, mime, signature, clamav, …`. The `signature`
     /// column carries the malware family (falls back to a generic label).
     pub fn from_malwarebazaar_csv(text: &str, version: u64) -> Result<Feed> {
-        let mut iocs = Vec::new();
+        let mut entries = BTreeMap::new();
         for line in text.lines() {
             let l = line.trim();
             if l.is_empty() || l.starts_with('#') {
@@ -425,13 +426,20 @@ impl Feed {
                 continue;
             }
             let threat = signature_label(f.get(8).map(String::as_str), "MalwareBazaar.Sample");
-            iocs.push(Ioc {
+            let previous = entries.entry(sha).or_insert_with(|| threat.clone());
+            if generic_hash_label(previous) && !generic_hash_label(&threat) {
+                *previous = threat;
+            }
+        }
+        let iocs = entries
+            .into_iter()
+            .map(|(value, threat)| Ioc {
                 ver: 0,
                 kind: IocKind::Sha256,
-                value: sha,
+                value,
                 threat,
-            });
-        }
+            })
+            .collect();
         Ok(Feed::new(version, iocs))
     }
 
@@ -439,14 +447,17 @@ impl Feed {
     /// allowed, optional surrounding quotes) - e.g. the abuse.ch MalwareBazaar
     /// `export/txt/sha256/` feed.
     pub fn from_sha256_list(text: &str, version: u64, threat: &str) -> Result<Feed> {
+        let mut seen = HashSet::new();
         let iocs = text
             .lines()
             .map(|l| l.trim().trim_matches('"').trim())
-            .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+            .filter(|h| valid_file_sha256(h))
+            .map(str::to_ascii_lowercase)
+            .filter(|h| seen.insert(h.clone()))
             .map(|h| Ioc {
                 ver: 0,
                 kind: IocKind::Sha256,
-                value: h.to_lowercase(),
+                value: h,
                 threat: threat.to_string(),
             })
             .collect();
@@ -608,6 +619,13 @@ impl IntelStore {
                     continue;
                 }
                 Some(existing) if existing.ver > feed.version => continue,
+                Some(existing)
+                    if ioc.kind == IocKind::Sha256
+                        && generic_hash_label(&ioc.threat)
+                        && !generic_hash_label(&existing.threat) =>
+                {
+                    continue;
+                }
                 _ => feed.version,
             };
             let mut ioc = ioc.clone();
@@ -733,6 +751,20 @@ fn valid_file_sha256(value: &str) -> bool {
         && !value.eq_ignore_ascii_case(
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         )
+}
+
+fn generic_hash_label(label: &str) -> bool {
+    matches!(
+        label.trim().to_ascii_lowercase().as_str(),
+        "" | "-"
+            | "unknown"
+            | "n/a"
+            | "malwarebazaar.sample"
+            | "threatfox.sample"
+            | "threatfox.ioc"
+            | "intel.unknown"
+            | "unknown.signature"
+    )
 }
 
 fn signature_label(raw: Option<&str>, fallback: &str) -> String {
@@ -999,7 +1031,7 @@ mod tests {
 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f\n\
 not-a-hash\n";
         let feed = Feed::from_sha256_list(txt, 1, "MalwareBazaar.Sample").unwrap();
-        assert_eq!(feed.iocs.len(), 2);
+        assert_eq!(feed.iocs.len(), 1);
         assert!(feed
             .iocs
             .iter()
@@ -1056,5 +1088,16 @@ not-a-hash\n";
         assert_eq!(store.apply_verified(&feed, &key).unwrap(), 2);
         assert_eq!(store.version, 6);
         assert_eq!(store.to_feed_since(5, 6).iocs.len(), 1);
+    }
+    #[test]
+    fn generic_hash_update_keeps_known_family() {
+        let digest = "b".repeat(64);
+        let mut store = IntelStore::new();
+        let known = Feed::from_sha256_list(&digest, 1, "Known.Family").unwrap();
+        let generic = Feed::from_sha256_list(&digest, 2, "MalwareBazaar.Sample").unwrap();
+        store.apply(&known, None).unwrap();
+        store.apply(&generic, None).unwrap();
+        assert_eq!(store.lookup_sha256(&digest), Some("Known.Family"));
+        assert!(store.to_feed_since(1, 2).iocs.is_empty());
     }
 }

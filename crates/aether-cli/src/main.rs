@@ -697,20 +697,7 @@ fn run_behavior(config: Config, args: BehaviorArgs) -> Result<ExitCode> {
         });
         anyhow::ensure!(model.is_available(), "no usable local Aegis backend");
         if !report.verdicts.is_empty() {
-            let mut evidence: Vec<_> = report
-                .verdicts
-                .iter()
-                .map(|v| v.signature.as_str())
-                .collect();
-            evidence.sort_unstable();
-            evidence.dedup();
-            let summary = format!(
-                "events={} entities={} relationships={} detectors={}",
-                events.len(),
-                report.nodes,
-                report.edges,
-                evidence.join(", ")
-            );
+            let summary = report.triage_summary(&events);
             if let Some(verdict) = model.review_behavior(&summary) {
                 report.verdicts.push(verdict);
             }

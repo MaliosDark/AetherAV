@@ -101,6 +101,8 @@ REVIEW_PROMPT = (
 # Detector combinations are separated by scenario. The evaluation groups
 # never appear in training, even with different numerical features.
 REVIEW_TRAIN = [
+    (("behavior.temporary_payload_persistence",), "Suspicious", "a temporary executable modified an autostart location"),
+    (("anomaly.process_endpoint_change",), "Suspicious", "an established program used an unexpected endpoint"),
     (("behavior.temporary_payload_connection",), "Suspicious", "temporary-file execution followed by an external connection"),
     (("behavior.process_injection",), "Suspicious", "the process injection detector reported a correlated sequence"),
     (("behavior.ransomware",), "Suspicious", "the file activity warrants review for ransomware"),
@@ -108,6 +110,8 @@ REVIEW_TRAIN = [
     (("anomaly.novel_network",), "Benign", "a new destination alone is not evidence of compromise"),
 ]
 REVIEW_EVAL = [
+    (("behavior.temporary_payload_connection", "behavior.temporary_payload_persistence"), "Suspicious", "execution was followed by network and autostart activity"),
+    (("anomaly.process_endpoint_change", "anomaly.novel_lineage"), "Suspicious", "a process showed unusual network and lineage signals"),
     (("behavior.office_spawns_script", "anomaly.novel_lineage"), "Suspicious", "an unusual interpreter lineage warrants review"),
     (("behavior.persistence", "behavior.encoded_powershell"), "Suspicious", "persistence and interpreter signals warrant review"),
     (("anomaly.rare_process",), "Benign", "a rare program alone is not evidence of compromise"),
@@ -115,13 +119,32 @@ REVIEW_EVAL = [
 ]
 
 
+# Minimum activity implied by detectors in the synthetic trace summary.
+# Field order matches BehaviorReport::triage_summary.
+REVIEW_ACTIVITY = {
+    "behavior.temporary_payload_persistence": (1, 2, 0, 0, 0),
+    "behavior.temporary_payload_connection": (1, 1, 1, 0, 0),
+    "anomaly.process_endpoint_change": (1, 0, 1, 0, 0),
+    "anomaly.novel_network": (0, 0, 1, 0, 0),
+    "behavior.process_injection": (0, 0, 0, 2, 0),
+    "behavior.office_spawns_script": (2, 0, 0, 0, 0),
+}
+
+
 def make_review(rng, cases):
     detectors, verdict, reason = rng.choice(cases)
-    events = rng.randint(4, 1500)
+    minimums = [REVIEW_ACTIVITY.get(detector, (0, 0, 0, 0, 0)) for detector in detectors]
+    counts = [max(values) for values in zip(*minimums)]
+    events = rng.randint(max(4, sum(counts)), 1500)
     entities = rng.randint(2, events)
     relationships = rng.randint(1, events)
     evidence = ", ".join(sorted(detectors))
-    summary = f"events={events} entities={entities} relationships={relationships} detectors={evidence}"
+    for _ in range(events - sum(counts)):
+        counts[rng.randrange(len(counts))] += 1
+    activity = ",".join(f"{kind}:{count}" for kind, count in zip(
+        ("spawn", "file", "net", "memory", "registry"), counts
+    ))
+    summary = f"events={events} entities={entities} relationships={relationships} activity={activity} detectors={evidence}"
     return REVIEW_PROMPT, summary, f"{verdict} | - | {reason}"
 
 

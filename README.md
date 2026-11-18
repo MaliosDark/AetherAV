@@ -67,9 +67,11 @@ aether behavior trace.json
 aether behavior trace.json --baseline known-good-baseline.json --aegis --json
 ```
 
-Learn the baseline from known-good traces with `aether learn`. The optional
-Aegis review receives event counts and detector IDs. It reports triage findings
-at suspicious severity. The rules evaluate the original trace locally.
+Learn the baseline from known-good traces with `aether learn`. Established
+programs can be flagged when they use an endpoint or port outside their
+learned behavior. Existing baselines learn the per-program profiles as new
+known-good traces are added. The optional Aegis review receives typed activity
+counts and detector IDs, and reports findings at suspicious severity.
 See [the training workflow](tools/TRAINING.md).
 
 ## 🔬 How a scan works

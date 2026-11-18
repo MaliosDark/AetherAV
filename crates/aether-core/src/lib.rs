@@ -286,10 +286,11 @@ impl Scanner {
         // Matches on SHA-256, MD5 or SHA-1 so ClamAV's MD5 DB and legacy IOCs hit.
         if self.config.engines.hash {
             if let Some(name) = self.hashdb.lookup_any(&hashes) {
-                verdicts.push(
-                    Verdict::malicious(EngineKind::Hash, name, 1.0)
-                        .with_detail("exact hash signature match"),
+                let detail = self.hashdb.curated_source(&hashes.sha256).map_or_else(
+                    || "exact hash signature match".to_string(),
+                    |source| format!("Exact SHA-256 signature match. Source {source}"),
                 );
+                verdicts.push(Verdict::malicious(EngineKind::Hash, name, 1.0).with_detail(detail));
                 return ScanReport {
                     path: path.to_path_buf(),
                     hashes,

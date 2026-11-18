@@ -36,6 +36,34 @@ impl BehaviorReport {
             .unwrap_or(ThreatLevel::Clean)
     }
 
+    /// Give local triage the shape of the activity without including trace
+    /// fields such as command lines, file paths, process names or addresses.
+    pub fn triage_summary(&self, events: &[Event]) -> String {
+        let mut kinds = [0; 5];
+        for event in events {
+            let kind = match event.action {
+                Action::ProcessSpawn { .. } => 0,
+                Action::FileWrite { .. }
+                | Action::FileDelete { .. }
+                | Action::FileRename { .. } => 1,
+                Action::NetConnect { .. } => 2,
+                Action::MemAlloc { .. }
+                | Action::RemoteThread { .. }
+                | Action::ModuleLoad { .. } => 3,
+                Action::RegistrySet { .. } => 4,
+            };
+            kinds[kind] += 1;
+        }
+        let [spawns, filesystem, network, memory, registry] = kinds;
+        let mut detectors: Vec<_> = self.verdicts.iter().map(|v| v.signature.as_str()).collect();
+        detectors.sort_unstable();
+        detectors.dedup();
+        format!(
+            "events={} entities={} relationships={} activity=spawn:{spawns},file:{filesystem},net:{network},memory:{memory},registry:{registry} detectors={}",
+            events.len(), self.nodes, self.edges, detectors.join(", ")
+        )
+    }
+
     /// Distinct MITRE ATT&CK techniques observed, sorted and de-duplicated.
     pub fn techniques(&self) -> Vec<String> {
         let mut t: Vec<String> = self
@@ -110,6 +138,30 @@ mod tests {
         events[2].pid = 34;
         events.swap(1, 2);
         assert!(!matched(&events));
+    }
+
+    #[test]
+    fn staged_process_writing_autostart_is_suspicious() {
+        let mut events = Event::from_json(r#"[
+            {"pid":12,"action":"file_write","path":"/tmp/local-only-value"},
+            {"pid":12,"action":"process_spawn","child_pid":34,"image":"/tmp/local-only-value","cmdline":"private-argument"},
+            {"pid":34,"action":"file_write","path":"/etc/systemd/system/example.service"}
+        ]"#).unwrap();
+        let engine = BehaviorEngine::new();
+        let report = engine.analyze(&events);
+        assert!(report.techniques().contains(&"T1543.002".to_string()));
+        assert_eq!(report.disposition(), ThreatLevel::Suspicious);
+        let summary = report.triage_summary(&events);
+        assert!(summary.contains("activity=spawn:1,file:2,net:0,memory:0,registry:0"));
+        assert!(summary.contains("behavior.temporary_payload_persistence"));
+        assert!(!summary.contains("local-only-value"));
+        assert!(!summary.contains("private-argument"));
+        assert!(!summary.contains("example.service"));
+        events[2].pid = 35;
+        assert!(!engine
+            .analyze(&events)
+            .techniques()
+            .contains(&"T1543.002".to_string()));
     }
 
     #[test]

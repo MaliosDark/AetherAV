@@ -65,7 +65,7 @@ pub fn evaluate(events: &[Event], graph: &BehaviorGraph) -> Vec<Verdict> {
     verdicts.extend(ransomware(events, graph));
     verdicts.extend(c2_beacon(events, graph));
     verdicts.extend(persistence(events));
-    verdicts.extend(temporary_payload_connection(events));
+    verdicts.extend(temporary_payload_activity(events));
     verdicts
 }
 
@@ -291,13 +291,14 @@ fn c2_beacon(events: &[Event], graph: &BehaviorGraph) -> Option<Verdict> {
     ))
 }
 
-/// Correlate a file write, execution of that exact file by the writer, and an
-/// external connection from the new child. Use a bounded event-distance because
-/// sensor timestamps have source-defined units.
-fn temporary_payload_connection(events: &[Event]) -> Option<Verdict> {
+/// Track exact writes and executions within a bounded event-distance, then
+/// attribute outbound activity and autostart writes to the new process.
+fn temporary_payload_activity(events: &[Event]) -> Vec<Verdict> {
     const WINDOW: usize = 128;
     let mut writes = HashMap::new();
     let mut spawned = HashMap::new();
+    let mut connection = None;
+    let mut persistence = None;
 
     for (index, event) in events.iter().enumerate() {
         match &event.action {
@@ -321,8 +322,32 @@ fn temporary_payload_connection(events: &[Event]) -> Option<Verdict> {
                     }
                 }
             }
+            Action::FileWrite { path, .. } | Action::FileRename { to: path, .. }
+                if persistence.is_none()
+                    && spawned
+                        .get(&event.pid)
+                        .is_some_and(|wrote_at| index - wrote_at <= WINDOW) =>
+            {
+                let technique = if path.starts_with("/etc/systemd/system/") {
+                    Some("T1543.002")
+                } else if path == "/etc/crontab" || path.starts_with("/etc/cron.d/") {
+                    Some("T1053.003")
+                } else {
+                    None
+                };
+                if let Some(technique) = technique {
+                    persistence = Some(verdict(
+                        ThreatLevel::Suspicious,
+                        "behavior.temporary_payload_persistence",
+                        0.85,
+                        &[technique],
+                        format!("process {} executed a newly written temporary file and changed a system autostart location", event.pid),
+                    ));
+                }
+            }
             Action::NetConnect { remote, port }
-                if *port != 0
+                if connection.is_none()
+                    && *port != 0
                     && spawned
                         .get(&event.pid)
                         .is_some_and(|wrote_at| index - wrote_at <= WINDOW)
@@ -336,7 +361,7 @@ fn temporary_payload_connection(events: &[Event]) -> Option<Verdict> {
                             && !ip.is_broadcast()
                     }) =>
             {
-                return Some(verdict(
+                connection = Some(verdict(
                     ThreatLevel::Suspicious,
                     "behavior.temporary_payload_connection",
                     0.8,
@@ -346,8 +371,11 @@ fn temporary_payload_connection(events: &[Event]) -> Option<Verdict> {
             }
             _ => {}
         }
+        if connection.is_some() && persistence.is_some() {
+            break;
+        }
     }
-    None
+    connection.into_iter().chain(persistence).collect()
 }
 
 /// T1547.001 / T1053.005 - autostart registry keys or scheduled-task creation.
