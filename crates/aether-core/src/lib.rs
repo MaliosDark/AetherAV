@@ -622,7 +622,7 @@ impl Scanner {
     /// are logged and counted, never abort the whole run.
     pub fn scan_path(&self, root: &Path) -> Result<(Vec<ScanReport>, ScanSummary)> {
         let start = Instant::now();
-        let targets = self.collect_targets(root)?;
+        let (targets, traversal_errors) = self.collect_targets(root)?;
         tracing::info!(files = targets.len(), "starting scan");
 
         let reports: Vec<std::result::Result<ScanReport, ()>> = targets
@@ -634,7 +634,10 @@ impl Scanner {
             })
             .collect();
 
-        let mut summary = ScanSummary::default();
+        let mut summary = ScanSummary {
+            errors: traversal_errors,
+            ..ScanSummary::default()
+        };
         let mut ok = Vec::with_capacity(reports.len());
         for r in reports {
             match r {
@@ -650,9 +653,9 @@ impl Scanner {
     }
 
     /// Enumerate files under `root` according to the recursion setting.
-    fn collect_targets(&self, root: &Path) -> Result<Vec<PathBuf>> {
+    fn collect_targets(&self, root: &Path) -> Result<(Vec<PathBuf>, u64)> {
         if root.is_file() {
-            return Ok(vec![root.to_path_buf()]);
+            return Ok((vec![root.to_path_buf()], 0));
         }
         if !root.exists() {
             return Err(Error::Io {
@@ -666,14 +669,19 @@ impl Scanner {
         } else {
             1
         };
-        let targets = WalkDir::new(root)
-            .max_depth(max_depth)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .map(|e| e.into_path())
-            .collect();
-        Ok(targets)
+        let mut targets = Vec::new();
+        let mut errors = 0;
+        for entry in WalkDir::new(root).max_depth(max_depth) {
+            match entry {
+                Ok(entry) if entry.file_type().is_file() => targets.push(entry.into_path()),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "scan directory traversal error");
+                    errors += 1;
+                }
+            }
+        }
+        Ok((targets, errors))
     }
 }
 

@@ -202,3 +202,22 @@ performance on real traces or the behavior of an exported quantized model.
 On 120 held-out synthetic observations, the baseline got 42 labels correct
 and the candidate got 69 correct. False positives rose from 21 to 39 out
 of 49 benign observations, so the candidate was not promoted.
+
+## Release benchmark
+
+Use an independent, labelled corpus in an isolated environment and run the
+build and configuration intended for distribution. Keep benchmark hashes
+outside training, calibration and the packed signature catalog. Reserve
+a new holdout if the final test outcomes inform new rules or thresholds.
+
+```sh
+./tools/benchmark.sh --clean heldout-benign --malware heldout-malicious \
+  --name "Independent dated holdout" --release-gate
+```
+
+The evaluator scans nested directories, counts each SHA-256 once and rejects
+empty classes, conflicting labels, traversal or scan errors, and files
+skipped by the size limit. It reports 95% Wilson intervals. The gate requires
+a recall lower bound of at least 98.99% and a false-positive upper bound of
+at most 0.29%. Status 3 means a complete evaluation missed the target.
+A smoke test using only EICAR cannot qualify as a release evaluation.

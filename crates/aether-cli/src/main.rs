@@ -6,6 +6,7 @@
 //!   aether info                                 show engine/build status
 
 mod defense;
+mod evaluation;
 mod ssh_events;
 
 use aether_common::logging::{self, LogFormat};
@@ -483,6 +484,9 @@ struct EvalArgs {
     /// Directory of known-malicious files (false negatives are missed here).
     #[arg(long)]
     malware: PathBuf,
+    /// Fail unless the 95% confidence bounds satisfy the release targets.
+    #[arg(long)]
+    release_gate: bool,
     /// Also run `clamscan` on the same dirs for a head-to-head (needs ClamAV).
     #[arg(long)]
     clamav: bool,
@@ -590,7 +594,7 @@ fn main() -> ExitCode {
         Command::Tlsh(args) => run_tlsh(args),
         Command::Imphash(args) => run_imphash(args),
         Command::Timestomp(args) => run_timestomp(args),
-        Command::Eval(args) => run_eval(config, args),
+        Command::Eval(args) => evaluation::run(config, args),
         Command::Reputation(args) => run_reputation(args),
         Command::Cve(args) => run_cve(args),
         Command::Feedsign(args) => run_feedsign(args),
@@ -2825,82 +2829,6 @@ fn run_submit(args: SubmitArgs) -> Result<ExitCode> {
             }
         }
     }
-}
-
-/// Evaluate detection quality on labeled directories and print metrics.
-fn run_eval(config: Config, args: EvalArgs) -> Result<ExitCode> {
-    let scanner = Scanner::new(config).context("failed to initialize scanner")?;
-
-    let (clean, _) = scanner
-        .scan_path(&args.clean)
-        .with_context(|| format!("scanning clean set {}", args.clean.display()))?;
-    let (malware, _) = scanner
-        .scan_path(&args.malware)
-        .with_context(|| format!("scanning malware set {}", args.malware.display()))?;
-
-    let fp = clean.iter().filter(|r| r.is_threat()).count();
-    let tn = clean.len() - fp;
-    let tp = malware.iter().filter(|r| r.is_threat()).count();
-    let fn_ = malware.len() - tp;
-
-    let pct = |n: usize, d: usize| {
-        if d == 0 {
-            0.0
-        } else {
-            100.0 * n as f64 / d as f64
-        }
-    };
-    let precision = pct(tp, tp + fp);
-    let recall = pct(tp, tp + fn_); // detection rate
-    let fpr = pct(fp, fp + tn);
-    let accuracy = pct(tp + tn, tp + tn + fp + fn_);
-
-    println!("AetherAV detection evaluation");
-    println!("  clean samples:   {}", clean.len());
-    println!("  malware samples: {}", malware.len());
-    println!("  +---------------+----------+----------+");
-    println!("  |               | flagged  | clean    |");
-    println!("  | malware (P)   | TP {tp:<5} | FN {fn_:<5} |");
-    println!("  | benign  (N)   | FP {fp:<5} | TN {tn:<5} |");
-    println!("  +---------------+----------+----------+");
-    println!("  detection rate (recall): {recall:.2}%");
-    println!("  false-positive rate:     {fpr:.2}%");
-    println!("  precision:               {precision:.2}%");
-    println!("  accuracy:                {accuracy:.2}%");
-
-    if args.clamav {
-        match (
-            clamscan_detections(&args.malware),
-            clamscan_detections(&args.clean),
-        ) {
-            (Some(mdet), Some(cfp)) => {
-                println!("\nClamAV (clamscan) head-to-head");
-                println!(
-                    "  detection rate: {:.2}%  ({mdet}/{} malware)",
-                    pct(mdet, malware.len()),
-                    malware.len()
-                );
-                println!("  false positives: {cfp} on the clean set");
-            }
-            _ => println!("\n(clamscan not available - install ClamAV for a head-to-head)"),
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Count files ClamAV flags in `dir` (`<file>: <sig> FOUND`). None if unavailable.
-fn clamscan_detections(dir: &std::path::Path) -> Option<usize> {
-    let out = aether_common::quiet_command("clamscan")
-        .args(["-r", "--no-summary", "-i"])
-        .arg(dir)
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    Some(
-        text.lines()
-            .filter(|l| l.trim_end().ends_with("FOUND"))
-            .count(),
-    )
 }
 
 /// Run the HTTP/JSON daemon until interrupted.

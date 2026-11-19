@@ -21,14 +21,26 @@ AETHER="$(ls target/release/aether 2>/dev/null || ls target/debug/aether 2>/dev/
 [ -n "$AETHER" ] || { echo "build first: cargo build --release -p aether-cli"; exit 1; }
 
 MAL=""; CLEAN=""; NAME=""
+eval_options=()
+release_gate=false
 while [ $# -gt 0 ]; do case "$1" in
   --malware) MAL="$2"; shift 2;;
   --clean)   CLEAN="$2"; shift 2;;
   --name)    NAME="$2"; shift 2;;
+  --release-gate) release_gate=true; shift;;
   *) echo "unknown arg: $1"; exit 2;;
 esac; done
 
+if "$release_gate"; then
+  if [ -z "$MAL" ] || [ -z "$CLEAN" ]; then
+    echo "--release-gate requires explicit --malware and --clean corpora" >&2
+    exit 2
+  fi
+  eval_options+=(--release-gate)
+fi
+
 WORK="$(mktemp -d)"
+trap 'rm -rf -- "$WORK"' EXIT
 
 # Default benign corpus: a sample of real system binaries.
 if [ -z "$CLEAN" ]; then
@@ -46,10 +58,13 @@ if [ -z "$MAL" ]; then
 fi
 [ -z "$NAME" ] && NAME="custom corpus"
 
-NC=$(find "$CLEAN" -type f | wc -l)
-NM=$(find "$MAL" -type f | wc -l)
 DATE="$(date -u +%Y-%m-%d)"
-EVAL="$("$AETHER" eval --clean "$CLEAN" --malware "$MAL" 2>/dev/null)"
+status=0
+EVAL="$("$AETHER" eval --clean "$CLEAN" --malware "$MAL" "${eval_options[@]}")" || status=$?
+if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+  exit "$status"
+fi
+SIGNATURES="$("$AETHER" info | awk '/hash engine:|packed hash:/ { sub(/^[ ]+/, ""); printf "%s%s", sep, $0; sep=" / " }')"
 
 mkdir -p dist
 REPORT="dist/benchmark-report.md"
@@ -60,9 +75,9 @@ cat > "$REPORT" <<MD
 |-------|-------|
 | Engine | $("$AETHER" --version 2>/dev/null | head -1) |
 | Date (UTC) | $DATE |
-| Malware set | $NAME ($NM files) |
-| Benign set | $CLEAN ($NC files) |
-| Signatures | $("$AETHER" vt-scan --engine-version /dev/null 2>/dev/null) |
+| Malware set | $NAME |
+| Benign set | $CLEAN |
+| Signatures | $SIGNATURES |
 
 ## Results
 \`\`\`
@@ -84,7 +99,7 @@ $EVAL
   forbid using it for AV testing/benchmarking).
 MD
 
-rm -rf "$WORK"
 echo "report written: $REPORT"
 echo "-----"
 cat "$REPORT"
+exit "$status"
