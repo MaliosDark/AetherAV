@@ -22,6 +22,9 @@ pub struct Baseline {
     pub spawn_pairs: HashMap<String, u64>,
     /// remote endpoint -> times connected.
     pub net_dests: HashMap<String, u64>,
+    /// Executable basename -> learned profile of outbound connections.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    process_network: HashMap<String, NetworkProfile>,
     /// Known autostart registry keys (lowercased).
     pub autostart_keys: HashSet<String>,
     /// Distribution of spawn command-line lengths.
@@ -39,27 +42,53 @@ pub fn is_autostart(key: &str) -> bool {
         || k.contains("\\winlogon\\shell")
 }
 
-/// Build a pid -> image-basename map from the spawn events in a trace.
-fn images_of(events: &[Event]) -> HashMap<u32, String> {
-    let mut m = HashMap::new();
-    for ev in events {
-        if let Action::ProcessSpawn {
-            child_pid, image, ..
-        } = &ev.action
-        {
-            m.insert(*child_pid, basename(image));
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct NetworkProfile {
+    observations: u64,
+    endpoints: HashSet<String>,
+}
+
+impl NetworkProfile {
+    fn observe(&mut self, endpoint: String) {
+        self.observations = self.observations.saturating_add(1);
+        // A process with many destinations is too variable to score this way.
+        // Keep one extra distinct endpoint to remember that it crossed the cap.
+        if self.endpoints.len() <= 8 {
+            self.endpoints.insert(endpoint);
         }
     }
-    m
+
+    fn considers_unusual(&self, endpoint: &str) -> bool {
+        let distinct = self.endpoints.len();
+        (1..=8).contains(&distinct)
+            && self.observations >= 12.max(distinct as u64 * 4)
+            && !self.endpoints.contains(endpoint)
+    }
+}
+
+pub(crate) fn endpoint_key(remote: &str, port: u16) -> Option<String> {
+    let host = remote.trim().trim_end_matches('.');
+    if host.is_empty() || port == 0 {
+        return None;
+    }
+    let host = host
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| host.to_ascii_lowercase());
+    Some(format!("[{host}]:{port}"))
 }
 
 impl Baseline {
     /// Fold an event trace into the baseline (online update).
     pub fn update(&mut self, events: &[Event]) {
-        let images = images_of(events);
+        let mut images = HashMap::new();
         for ev in events {
             match &ev.action {
-                Action::ProcessSpawn { image, cmdline, .. } => {
+                Action::ProcessSpawn {
+                    child_pid,
+                    image,
+                    cmdline,
+                } => {
                     let child = basename(image);
                     *self.process_freq.entry(child.clone()).or_default() += 1;
                     let parent = images
@@ -72,10 +101,19 @@ impl Baseline {
                         .or_default() += 1;
                     self.cmdline_len.observe(cmdline.len() as f64);
                     self.total_spawns += 1;
+                    images.insert(*child_pid, child);
                 }
-                Action::NetConnect { remote, .. } => {
+                Action::NetConnect { remote, port } => {
                     *self.net_dests.entry(remote.clone()).or_default() += 1;
                     self.total_nets += 1;
+                    if let (Some(image), Some(endpoint)) =
+                        (images.get(&ev.pid), endpoint_key(remote, *port))
+                    {
+                        self.process_network
+                            .entry(image.clone())
+                            .or_default()
+                            .observe(endpoint);
+                    }
                 }
                 Action::RegistrySet { key, .. } if is_autostart(key) => {
                     self.autostart_keys.insert(key.to_lowercase());
@@ -83,6 +121,12 @@ impl Baseline {
                 _ => {}
             }
         }
+    }
+
+    pub(crate) fn unusual_process_endpoint(&self, image: &str, endpoint: &str) -> bool {
+        self.process_network
+            .get(image)
+            .is_some_and(|profile| profile.considers_unusual(endpoint))
     }
 
     /// Whether the baseline has seen enough spawns to score without cold-start

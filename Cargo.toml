@@ -30,7 +30,7 @@ members = [
 [workspace.package]
 version = "2026.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.95"
 license = "Apache-2.0"
 authors = ["AetherAV Contributors"]
 repository = "https://github.com/MaliosDark/AetherAV"
@@ -93,8 +93,7 @@ aho-corasick = "1"
 
 # Parsing / detection
 goblin = "0.9"      # PE / ELF / Mach-O object parsing
-yara-x = "0.13"     # Pure-Rust YARA engine (YARA-X)
-memmap2 = "0.9"     # zero-copy file mapping for large samples
+yara-x = "1.23"     # Pure-Rust YARA engine (YARA-X)
 walkdir = "2"       # recursive directory traversal
 rayon = "1.10"      # data-parallel scanning across cores
 petgraph = "0.6"    # process/file/network relationship graph
@@ -104,9 +103,9 @@ iced-x86 = "1.21"   # pure-Rust x86/x64 disassembler for the sandbox analyzer
 chacha20poly1305 = "0.10"  # AEAD for the encrypted quarantine vault
 ed25519-dalek = "2"        # asymmetric signing of threat-intel feeds (supply-chain integrity)
 getrandom = "0.2"          # OS RNG for vault keys / nonces
-zip = { version = "2", default-features = false, features = ["deflate"] }  # archive extraction
+zip = { version = "9.7", default-features = false, features = ["deflate"] }  # archive extraction
 flate2 = "1"               # gzip decompression
-tar = "0.4"                # tar extraction
+tar = "0.4.46"                # tar extraction
 
 # Test / bench
 criterion = { version = "0.5", features = ["html_reports"] }

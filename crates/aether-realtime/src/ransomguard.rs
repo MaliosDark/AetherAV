@@ -3,13 +3,14 @@
 //! Top endpoint products survive ransomware by *recovering*, not just detecting.
 //! This arms a protected directory by (1) snapshotting its files into a vault and
 //! (2) planting **canary** files. It then watches for the encryption signature -
-//! a canary being modified, or many files rewritten with high-entropy
-//! (encrypted) content in a short window - and on trigger **restores every file
-//! from the snapshot**, undoing the damage.
+//! a canary being modified, or many files rewritten with high-entropy content.
+//! Approved rollback uses the available snapshot once after detection.
 
 use crate::FileWatcher;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -44,9 +45,16 @@ pub struct RansomGuard {
     dir: PathBuf,
     vault: PathBuf,
     canaries: Vec<PathBuf>,
+    snapshot: Vec<SnapshotFile>,
     /// Mass-modification trigger: this many files changed within the window.
     burst: usize,
     window: Duration,
+}
+
+struct SnapshotFile {
+    name: std::ffi::OsString,
+    digest: [u8; 32],
+    permissions: fs::Permissions,
 }
 
 const CANARY_BODY: &[u8] =
@@ -54,41 +62,93 @@ const CANARY_BODY: &[u8] =
 const MAX_SNAPSHOT_FILE: u64 = 25 * 1024 * 1024;
 
 impl RansomGuard {
-    /// Snapshot `dir` into `vault` and plant canaries. Existing vault contents
-    /// for this dir are refreshed.
+    /// Snapshot direct regular files and plant canaries without reusing an
+    /// existing snapshot directory or overwriting existing canaries.
     pub fn arm(dir: impl AsRef<Path>, vault: impl AsRef<Path>) -> Result<RansomGuard, String> {
-        let dir = dir.as_ref().to_path_buf();
-        let vault = vault.as_ref().to_path_buf();
-        fs::create_dir_all(&vault).map_err(|e| e.to_string())?;
-
-        // Snapshot every regular file (bounded) under dir into vault/<name>.
-        let mut count = 0usize;
-        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
-            let p = entry.path();
-            if p.is_file() {
-                if let Ok(meta) = p.metadata() {
-                    if meta.len() <= MAX_SNAPSHOT_FILE {
-                        if let Some(name) = p.file_name() {
-                            let _ = fs::copy(&p, vault.join(name));
-                            count += 1;
-                        }
-                    }
-                }
+        let dir = fs::canonicalize(dir).map_err(|e| e.to_string())?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(vault.as_ref()).map_err(|e| e.to_string())?;
+        let vault = fs::canonicalize(vault).map_err(|e| e.to_string())?;
+        if dir.starts_with(&vault) {
+            return Err("snapshot vault cannot contain the protected directory".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&vault)
+                .map_err(|e| e.to_string())?
+                .permissions()
+                .mode();
+            if mode & 0o077 != 0 {
+                return Err("snapshot vault requires private permissions (0700)".into());
             }
         }
+        if fs::read_dir(&vault)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_some()
+        {
+            return Err("snapshot vault must be empty".into());
+        }
+        let canaries: Vec<_> = ["__aether_canary_0001.txt", "zzz__aether_canary_9999.txt"]
+            .into_iter()
+            .map(|name| dir.join(name))
+            .collect();
+        if canaries
+            .iter()
+            .any(|path| fs::symlink_metadata(path).is_ok())
+        {
+            return Err(
+                "preexisting canary path. Archive the previous snapshot and review the canaries"
+                    .into(),
+            );
+        }
 
-        // Plant canaries (named to sort first/last so attackers hit them early).
-        let mut canaries = Vec::new();
-        for name in ["__aether_canary_0001.txt", "zzz__aether_canary_9999.txt"] {
-            let cp = dir.join(name);
-            if fs::write(&cp, CANARY_BODY).is_ok() {
-                let _ = fs::copy(&cp, vault.join(name));
-                canaries.push(cp);
+        let mut snapshot = Vec::new();
+        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let meta = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+            if meta.is_file() && meta.len() <= MAX_SNAPSHOT_FILE {
+                let original =
+                    read_bounded(&entry.path(), MAX_SNAPSHOT_FILE).map_err(|e| e.to_string())?;
+                let mut staged =
+                    tempfile::NamedTempFile::new_in(&vault).map_err(|e| e.to_string())?;
+                staged.write_all(&original).map_err(|e| e.to_string())?;
+                staged.as_file().sync_all().map_err(|e| e.to_string())?;
+                let name = entry.file_name();
+                staged
+                    .persist_noclobber(vault.join(&name))
+                    .map_err(|e| e.to_string())?;
+                let permissions = meta.permissions();
+                #[cfg(unix)]
+                let permissions = {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::Permissions::from_mode(permissions.mode() & 0o777)
+                };
+                snapshot.push(SnapshotFile {
+                    name,
+                    digest: Sha256::digest(&original).into(),
+                    permissions,
+                });
             }
+        }
+        for path in &canaries {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .and_then(|mut file| file.write_all(CANARY_BODY))
+                .map_err(|e| e.to_string())?;
         }
 
         tracing::info!(
-            files = count,
+            files = snapshot.len(),
             canaries = canaries.len(),
             "ransomguard armed"
         );
@@ -96,61 +156,93 @@ impl RansomGuard {
             dir,
             vault,
             canaries,
+            snapshot,
             burst: 8,
             window: Duration::from_secs(5),
         })
     }
 
     fn canary_intact(&self) -> bool {
-        self.canaries
-            .iter()
-            .all(|c| fs::read(c).map(|b| b == CANARY_BODY).unwrap_or(false))
+        self.canaries.iter().all(|c| {
+            fs::symlink_metadata(c).is_ok_and(|meta| meta.is_file())
+                && read_bounded(c, CANARY_BODY.len() as u64).is_ok_and(|b| b == CANARY_BODY)
+        })
     }
 
-    /// Keep restoring until the attacker goes quiet (no change for one window) -
-    /// a single restore loses the race against a still-running encryptor.
-    /// Returns the number of files in the snapshot (what protection covers).
-    fn mitigate(&self, watcher: &FileWatcher) -> usize {
-        let restored = self.restore();
-        // Drain further tampering, re-restoring, until quiet for one window.
-        while watcher.next_changed(self.window).is_some() {
-            self.restore();
-        }
-        restored
-    }
-
-    /// Restore every snapshotted file back into the protected directory.
+    /// Restore only missing or altered regular files from the snapshot.
     pub fn restore(&self) -> usize {
-        let mut n = 0;
-        if let Ok(rd) = fs::read_dir(&self.vault) {
-            for e in rd.flatten() {
-                if e.path().is_file() {
-                    if let Some(name) = e.path().file_name() {
-                        if fs::copy(e.path(), self.dir.join(name)).is_ok() {
-                            n += 1;
-                        }
-                    }
+        self.snapshot
+            .iter()
+            .filter(|item| {
+                let source = self.vault.join(&item.name);
+                let target = self.dir.join(&item.name);
+                let Ok(meta) = fs::symlink_metadata(&source) else {
+                    return false;
+                };
+                if !meta.is_file() || meta.len() > MAX_SNAPSHOT_FILE {
+                    return false;
                 }
-            }
-        }
-        n
+                let Ok(original) = read_bounded(&source, MAX_SNAPSHOT_FILE) else {
+                    return false;
+                };
+                if <[u8; 32]>::from(Sha256::digest(&original)) != item.digest {
+                    tracing::warn!(path=%source.display(), "snapshot integrity mismatch");
+                    return false;
+                }
+                match fs::symlink_metadata(&target) {
+                    Ok(meta) if !meta.is_file() => return false,
+                    Ok(_)
+                        if read_bounded(&target, MAX_SNAPSHOT_FILE)
+                            .is_ok_and(|bytes| bytes == original) =>
+                    {
+                        return false
+                    }
+                    Ok(_) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return false,
+                }
+                let result = (|| -> std::io::Result<()> {
+                    let mut tmp = tempfile::NamedTempFile::new_in(&self.dir)?;
+                    tmp.write_all(&original)?;
+                    tmp.as_file().set_permissions(item.permissions.clone())?;
+                    tmp.as_file().sync_all()?;
+                    tmp.persist(&target)?;
+                    Ok(())
+                })();
+                if let Err(error) = &result {
+                    tracing::warn!(path=%target.display(), %error, "snapshot recovery failed");
+                }
+                result.is_ok()
+            })
+            .count()
     }
 
-    /// Watch until ransomware behaviour is detected, then roll back. Returns the
-    /// incident. `on_event` is called for each change (for live UIs/logging).
-    pub fn run<F: FnMut(&Path)>(&self, mut on_event: F) -> Result<Incident, String> {
-        let watcher = FileWatcher::watch(&self.dir)?;
+    /// Watch with snapshot recovery enabled.
+    pub fn run<F: FnMut(&Path)>(&self, on_event: F) -> Result<Incident, String> {
+        self.watch(true, on_event)
+    }
+
+    /// Watch and optionally perform one approved rollback after detection.
+    pub fn watch<F: FnMut(&Path)>(
+        &self,
+        restore_approved: bool,
+        mut on_event: F,
+    ) -> Result<Incident, String> {
+        let watcher = FileWatcher::watch_with_removals(&self.dir, true)?;
         let mut recent: HashMap<PathBuf, Instant> = HashMap::new();
 
         loop {
             let Some(path) = watcher.next_changed(Duration::from_secs(3600)) else {
                 continue;
             };
+            if path.starts_with(&self.vault) {
+                continue;
+            }
             on_event(&path);
 
             // Strongest signal: a canary was touched.
             if !self.canary_intact() {
-                let restored = self.mitigate(&watcher);
+                let restored = if restore_approved { self.restore() } else { 0 };
                 return Ok(Incident {
                     reason: "canary file modified - ransomware behaviour".into(),
                     modified: recent.len() + 1,
@@ -168,14 +260,17 @@ impl RansomGuard {
                 let high = recent
                     .keys()
                     .filter(|p| {
-                        fs::read(p)
+                        if !fs::symlink_metadata(p).is_ok_and(|meta| meta.is_file()) {
+                            return false;
+                        }
+                        read_bounded(p, MAX_SNAPSHOT_FILE)
                             .ok()
                             .map(|b| !b.is_empty() && entropy(&b) > 7.5)
                             .unwrap_or(false)
                     })
                     .count();
                 if high * 2 >= recent.len() {
-                    let restored = self.mitigate(&watcher);
+                    let restored = if restore_approved { self.restore() } else { 0 };
                     return Ok(Incident {
                         reason: format!(
                             "{} files rewritten with high-entropy data in {:?}",
@@ -191,9 +286,66 @@ impl RansomGuard {
     }
 }
 
+fn read_bounded(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other(
+            "snapshot source is not a regular file",
+        ));
+    }
+    file.take(max + 1).read_to_end(&mut buf)?;
+    if buf.len() as u64 > max {
+        return Err(std::io::Error::other("snapshot sample exceeds file limit"));
+    }
+    Ok(buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn altered_vault_contents_are_not_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let protected = dir.path().join("protected");
+        let vault = dir.path().join("vault");
+        fs::create_dir(&protected).unwrap();
+        let target = protected.join("doc.txt");
+        fs::write(&target, b"original").unwrap();
+        let guard = RansomGuard::arm(&protected, &vault).unwrap();
+        fs::write(vault.join("doc.txt"), b"tampered backup").unwrap();
+        fs::write(&target, b"changed document").unwrap();
+        assert_eq!(guard.restore(), 0);
+        assert_eq!(fs::read(target).unwrap(), b"changed document");
+    }
+
+    #[test]
+    fn rollback_does_not_overwrite_symlink_targets() {
+        #[cfg(unix)]
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let protected = dir.path().join("protected");
+            fs::create_dir(&protected).unwrap();
+            let target = protected.join("doc.txt");
+            fs::write(&target, b"original").unwrap();
+            let outside = dir.path().join("outside.txt");
+            fs::write(&outside, b"outside").unwrap();
+            let shield = RansomGuard::arm(&protected, dir.path().join("vault")).unwrap();
+            assert_eq!(shield.restore(), 0);
+            fs::remove_file(&target).unwrap();
+            std::os::unix::fs::symlink(&outside, &target).unwrap();
+            assert_eq!(shield.restore(), 0);
+            assert_eq!(fs::read(outside).unwrap(), b"outside");
+        }
+    }
 
     #[test]
     fn entropy_distinguishes_text_from_random() {

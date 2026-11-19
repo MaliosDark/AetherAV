@@ -97,29 +97,45 @@ pub fn extract(container: Container, data: &[u8], limits: Limits) -> Result<Vec<
 }
 
 fn extract_7z(data: &[u8], limits: Limits) -> Result<Vec<ExtractedFile>> {
-    let mut reader = sevenz_rust::SevenZReader::new(
+    use sevenz_rust2::{ArchiveReader, EntryDecision, Password};
+
+    const DECODER_LIMIT_KIB: usize = 64 * 1024;
+    let mut reader = ArchiveReader::new_with_memory_limit(
         Cursor::new(data),
-        data.len() as u64,
-        sevenz_rust::Password::empty(),
+        Password::empty(),
+        DECODER_LIMIT_KIB,
     )
     .map_err(|e| Error::Parser(format!("7z: {e}")))?;
+    reader.set_thread_count(1);
     let mut out = Vec::new();
-    let mut total = 0u64;
+    let mut remaining = limits.max_total_bytes;
     reader
-        .for_each_entries(|entry, rd| {
-            if entry.is_directory() || out.len() >= limits.max_entries {
-                return Ok(true);
+        .for_each_entries_with_decision(|entry, rd| {
+            if out.len() >= limits.max_entries || remaining == 0 {
+                return Ok(EntryDecision::Stop);
+            }
+            if entry.is_directory() {
+                return Ok(EntryDecision::Continue);
+            }
+            if entry.size() > remaining.min(limits.max_entry_bytes) {
+                return Ok(EntryDecision::SkipBlock);
             }
             let mut buf = Vec::new();
-            rd.take(limits.max_entry_bytes).read_to_end(&mut buf)?;
-            total += buf.len() as u64;
-            if total <= limits.max_total_bytes {
-                out.push(ExtractedFile {
-                    name: entry.name().to_string(),
-                    data: buf,
-                });
+            let cap = entry.size();
+            rd.take(cap.saturating_add(1)).read_to_end(&mut buf)?;
+            if buf.len() as u64 != cap {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "7z entry length did not match its header",
+                )
+                .into());
             }
-            Ok(true)
+            remaining -= cap;
+            out.push(ExtractedFile {
+                name: entry.name().to_string(),
+                data: buf,
+            });
+            Ok(EntryDecision::Continue)
         })
         .map_err(|e| Error::Parser(format!("7z read: {e}")))?;
     Ok(out)
@@ -138,7 +154,10 @@ fn extract_zip(data: &[u8], limits: Limits) -> Result<Vec<ExtractedFile>> {
         if !entry.is_file() || entry.size() > limits.max_entry_bytes {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|e| Error::Parser(format!("zip entry name {i}: {e}")))?
+            .into_owned();
         let mut buf = Vec::new();
         entry
             .by_ref()

@@ -1,0 +1,41 @@
+# First-party threat intelligence file hashes, reviewed 2026-11-18.
+# Entries are exact SHA-256 matches. Only malicious file artifacts are included.
+
+# NeedyMantis | https://www.microsoft.com/en-us/security/blog/2026/09/28/needymantis-unpacking-a-post-compromise-malware-family-used-in-targeted-operations/
+e842dd7642c8e04b5ec20b6393848a9c904e4832930950c16664fe7800ba382e Curated.NeedyMantis
+9cb68f986043a576e19d32184c583b7d8f571c7219d8dc0065dced1c13f077ef Curated.NeedyMantis
+c82520eb03c084226be4eafbff46f56dca0aa8804a2a7f23a085a96afe71ef77 Curated.NeedyMantis
+
+# GigaWiper | https://www.microsoft.com/en-us/security/blog/2026/07/09/gigawiper-anatomy-of-a-destructive-backdoor-assembled-from-multiple-malware/
+633d4cbd496b1094495da89a64f5e6c31a0f6d4d1488411db5b0cba1cfe42001 Curated.GigaWiper.backdoor
+ce9ad5f6c12019f4aae5b189bd8ddf5bb09e75b06a0a587b25a855c65948c913 Curated.GigaWiper.backdoor
+f622ed85ef31ad4ab973f4e74524866fe1bb44f0965ad2b2ad796cd657a05bfd Curated.GigaWiper.backdoor
+9706a192e2c1a1faaf0a521daf31c2af60ff4590e3f47bbb4abc227f42af0683 Curated.GigaWiper.backdoor
+3c30deb6556a94cfb84ae51798f4aecfae8c7358e55fdb321c5f2376579631cd Curated.GigaWiper.standalone.wiper
+440b5385d3838e3f6bc21220caa83b65cd5f3618daea676f271c3671650ce9a3 Curated.Crucio
+12c39f052f030a77c0cd531df86ad3477f46d1287b8b98b625d1dcf89385d721 Curated.FlockWiper
+db41e0da7ab3305be8d9720769c6950b4dc1c1984ef857d3310eb873a0fc7674 Curated.FlockWiper
+
+# CaptiveCrunch | https://www.microsoft.com/en-us/security/blog/2026/07/31/captivecrunch-midnight-blizzard-targets-travelers-worldwide-for-malware-delivery-and-credential-theft/
+918fa52ae45ed60ba7cc8bdc99c3cbe9ab92e0375ec31fc05d0d4513be11c593 Curated.CornFlake
+be99857449d2856dd5a84e21c8a3d5e0e01456adb44062ddec5a6b4970d8d42c Curated.ChocoShell
+
+# Miasma | https://www.microsoft.com/en-us/security/blog/2026/06/02/preinstall-persistence-inside-the-red-hat-npm-miasma-credential-stealing-campaign/
+396cac9e457ec54ff6d3f6311cb5cc1da8054d019ce3ffa1de5741506c7a4ea4 Curated.Miasma
+d8d170af3de17bb9b217c52aaaffdf9395f35ef015a57ef676e406c121e5e223 Curated.Miasma
+f0641e053e81f0d01fa46db35a83e0a34494886503086866d956d14e81fd3e1c Curated.Miasma
+d5a97614d5319ce9c8e01fa0b4eb06fb5b9e54fa13b23d718174a1546444123b Curated.Miasma
+f88258e21592084a2f93a572ade8f9b91c0cd0e242f5cf6121ed7bad0f7bdd1f Curated.Miasma
+25e121e3b7d300c0d0075b33e5eca39a3e6a659fb9cfee52b70ef71686628f1b Curated.Miasma
+
+# Trojanized Inno installers | https://www.microsoft.com/en-us/security/blog/2026/11/03/fake-download-campaign-uses-trojanized-installers-deliver-monetization-payloads/
+006510ce1da2b7410376f0788c19e55616eb4bcc30072d25b7d0871dc32aa11c Curated.TrojanizedInno.Stage2
+21306fc5716f95e252388f920314b42f1c8bcc7df67cb4d39da30217b96f4044 Curated.TrojanizedInno.Loader
+72750d32b440e9f2b6d05ff3d218a561a75d3d75fb976b461fa59897674a7f70 Curated.TrojanizedInno.Stage2
+ab2c2dd37fdcfe1e7620a57f98c80bd063258bea145adc0cc6a0f8b1e24c6a8f Curated.TrojanizedInno.Eld0
+452a210bba4c8d08f7cb7733a816d7220a7fa570a469aea0a997cfc8b594b6a0 Curated.TrojanizedInno.Eld0Eld1
+523fb81fae0c7beba7b5171243cc0dee7a4d04ae0483be9172eef2394a5a2152 Curated.TrojanizedInno.Eld0
+55cd3d36fdcc58016a64398357b2c9724a060da9f0d09266e537a61ec9552e4f Curated.TrojanizedInno.Eld2Eld5
+
+# Mirai | https://threatfox.abuse.ch/ioc/2018527/
+fd5305985b2556c9e6c2089a88e98c033ab80668053be4838c9dcd74b36e6b31 Curated.Mirai

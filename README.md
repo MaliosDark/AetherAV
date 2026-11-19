@@ -60,6 +60,26 @@ from cryptography and behavior analysis, not from hiding its code.
 
 ---
 
+## Defensive operations
+
+Linux process inspection, fileless triage, signature approval, multi-host SSH
+correlation and host configuration audits are documented in the
+[defensive operations guide](docs/DEFENSE-OPS.md).
+
+## Behavioral trace analysis
+
+```bash
+aether behavior trace.json
+aether behavior trace.json --baseline known-good-baseline.json --aegis --json
+```
+
+Learn the baseline from known-good traces with `aether learn`. Established
+programs can be flagged when they use an endpoint or port outside their
+learned behavior. Existing baselines learn the per-program profiles as new
+known-good traces are added. The optional Aegis review receives typed activity
+counts and detector IDs, and reports findings at suspicious severity.
+See [the training workflow](tools/TRAINING.md).
+
 ## 🔬 How a scan works
 
 Every file flows through independent engines. An exact hit short-circuits

@@ -65,6 +65,7 @@ pub fn evaluate(events: &[Event], graph: &BehaviorGraph) -> Vec<Verdict> {
     verdicts.extend(ransomware(events, graph));
     verdicts.extend(c2_beacon(events, graph));
     verdicts.extend(persistence(events));
+    verdicts.extend(temporary_payload_activity(events));
     verdicts
 }
 
@@ -288,6 +289,93 @@ fn c2_beacon(events: &[Event], graph: &BehaviorGraph) -> Option<Verdict> {
             hits.join(", ")
         ),
     ))
+}
+
+/// Track exact writes and executions within a bounded event-distance, then
+/// attribute outbound activity and autostart writes to the new process.
+fn temporary_payload_activity(events: &[Event]) -> Vec<Verdict> {
+    const WINDOW: usize = 128;
+    let mut writes = HashMap::new();
+    let mut spawned = HashMap::new();
+    let mut connection = None;
+    let mut persistence = None;
+
+    for (index, event) in events.iter().enumerate() {
+        match &event.action {
+            Action::FileWrite { path, .. }
+                if ["/tmp/", "/var/tmp/", "/dev/shm/"]
+                    .iter()
+                    .any(|prefix| path.starts_with(*prefix)) =>
+            {
+                writes.insert((event.pid, path.as_str()), index);
+            }
+            Action::FileDelete { path } => {
+                writes.remove(&(event.pid, path.as_str()));
+            }
+            Action::ProcessSpawn {
+                child_pid, image, ..
+            } => {
+                spawned.remove(child_pid);
+                if let Some(wrote_at) = writes.remove(&(event.pid, image.as_str())) {
+                    if index - wrote_at <= WINDOW {
+                        spawned.insert(*child_pid, wrote_at);
+                    }
+                }
+            }
+            Action::FileWrite { path, .. } | Action::FileRename { to: path, .. }
+                if persistence.is_none()
+                    && spawned
+                        .get(&event.pid)
+                        .is_some_and(|wrote_at| index - wrote_at <= WINDOW) =>
+            {
+                let technique = if path.starts_with("/etc/systemd/system/") {
+                    Some("T1543.002")
+                } else if path == "/etc/crontab" || path.starts_with("/etc/cron.d/") {
+                    Some("T1053.003")
+                } else {
+                    None
+                };
+                if let Some(technique) = technique {
+                    persistence = Some(verdict(
+                        ThreatLevel::Suspicious,
+                        "behavior.temporary_payload_persistence",
+                        0.85,
+                        &[technique],
+                        format!("process {} executed a newly written temporary file and changed a system autostart location", event.pid),
+                    ));
+                }
+            }
+            Action::NetConnect { remote, port }
+                if connection.is_none()
+                    && *port != 0
+                    && spawned
+                        .get(&event.pid)
+                        .is_some_and(|wrote_at| index - wrote_at <= WINDOW)
+                    && remote.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| {
+                        !ip.is_private()
+                            && !ip.is_loopback()
+                            && !ip.is_link_local()
+                            && !ip.is_multicast()
+                            && !ip.is_unspecified()
+                            && !ip.is_documentation()
+                            && !ip.is_broadcast()
+                    }) =>
+            {
+                connection = Some(verdict(
+                    ThreatLevel::Suspicious,
+                    "behavior.temporary_payload_connection",
+                    0.8,
+                    &[],
+                    format!("process {} executed a newly written temporary file and connected externally", event.pid),
+                ));
+            }
+            _ => {}
+        }
+        if connection.is_some() && persistence.is_some() {
+            break;
+        }
+    }
+    connection.into_iter().chain(persistence).collect()
 }
 
 /// T1547.001 / T1053.005 - autostart registry keys or scheduled-task creation.

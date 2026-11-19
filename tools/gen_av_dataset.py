@@ -8,7 +8,7 @@ assistant actually needs:
 
   1. cmdline   - classify a command line: verdict + MITRE technique + one line
   2. behavior  - map a behavior summary to a MITRE technique + verdict
-  3. explain   - turn structured engine findings into a one-sentence explanation
+  3. review    - triage structured sensor evidence using a bounded verdict
 
 All examples are DEFENSIVE: inputs are well-known, documented attacker patterns
 (or benign baselines); outputs are short labels/explanations - never novel
@@ -93,18 +93,60 @@ BEHAVIORS = [
     ("chrome.exe opened a local file and made no network connections", "-",
      "clean", "ordinary browser activity"),
 ]
-EXPLAIN = [
-    ({"engine": "hash", "sig": "Win.Trojan.X", "score": 1.0},
-     "Exact SHA-256 match against a known-malware signature - high confidence malicious."),
-    ({"engine": "heuristic", "sig": "pe.static.heuristic", "score": 0.85,
-      "detail": "very-high-entropy section + W^X + injection imports"},
-     "Packed PE with a writable+executable section and injection-capable imports - likely a packed dropper."),
-    ({"engine": "sandbox", "sig": "sandbox.shellcode.composite", "score": 0.95},
-     "Multiple independent shellcode techniques (PEB walk, API hashing, GetPC) - position-independent shellcode."),
-    ({"engine": "anomaly", "sig": "anomaly.novel_lineage", "score": 0.7,
-      "detail": "winword.exe>cmd.exe"},
-     "Unusual process lineage never seen on this host - Office spawning a shell is a phishing-chain indicator."),
+REVIEW_PROMPT = (
+    "Review these local behavioral observations for triage. "
+    "Reply: verdict | - | one-line reason."
+)
+
+# Detector combinations are separated by scenario. The evaluation groups
+# never appear in training, even with different numerical features.
+REVIEW_TRAIN = [
+    (("behavior.temporary_payload_persistence",), "Suspicious", "a temporary executable modified an autostart location"),
+    (("anomaly.process_endpoint_change",), "Suspicious", "an established program used an unexpected endpoint"),
+    (("behavior.temporary_payload_connection",), "Suspicious", "temporary-file execution followed by an external connection"),
+    (("behavior.process_injection",), "Suspicious", "the process injection detector reported a correlated sequence"),
+    (("behavior.ransomware",), "Suspicious", "the file activity warrants review for ransomware"),
+    (("anomaly.novel_process",), "Benign", "a new program alone is not evidence of compromise"),
+    (("anomaly.novel_network",), "Benign", "a new destination alone is not evidence of compromise"),
 ]
+REVIEW_EVAL = [
+    (("behavior.temporary_payload_connection", "behavior.temporary_payload_persistence"), "Suspicious", "execution was followed by network and autostart activity"),
+    (("anomaly.process_endpoint_change", "anomaly.novel_lineage"), "Suspicious", "a process showed unusual network and lineage signals"),
+    (("behavior.office_spawns_script", "anomaly.novel_lineage"), "Suspicious", "an unusual interpreter lineage warrants review"),
+    (("behavior.persistence", "behavior.encoded_powershell"), "Suspicious", "persistence and interpreter signals warrant review"),
+    (("anomaly.rare_process",), "Benign", "a rare program alone is not evidence of compromise"),
+    (("anomaly.cmdline_outlier",), "Benign", "an unusually long command line is not sufficient evidence"),
+]
+
+
+# Minimum activity implied by detectors in the synthetic trace summary.
+# Field order matches BehaviorReport::triage_summary.
+REVIEW_ACTIVITY = {
+    "behavior.temporary_payload_persistence": (1, 2, 0, 0, 0),
+    "behavior.temporary_payload_connection": (1, 1, 1, 0, 0),
+    "anomaly.process_endpoint_change": (1, 0, 1, 0, 0),
+    "anomaly.novel_network": (0, 0, 1, 0, 0),
+    "behavior.process_injection": (0, 0, 0, 2, 0),
+    "behavior.office_spawns_script": (2, 0, 0, 0, 0),
+}
+
+
+def make_review(rng, cases):
+    detectors, verdict, reason = rng.choice(cases)
+    minimums = [REVIEW_ACTIVITY.get(detector, (0, 0, 0, 0, 0)) for detector in detectors]
+    counts = [max(values) for values in zip(*minimums)]
+    events = rng.randint(max(4, sum(counts)), 1500)
+    entities = rng.randint(2, events)
+    relationships = rng.randint(1, events)
+    evidence = ", ".join(sorted(detectors))
+    for _ in range(events - sum(counts)):
+        counts[rng.randrange(len(counts))] += 1
+    activity = ",".join(f"{kind}:{count}" for kind, count in zip(
+        ("spawn", "file", "net", "memory", "registry"), counts
+    ))
+    summary = f"events={events} entities={entities} relationships={relationships} activity={activity} detectors={evidence}"
+    return REVIEW_PROMPT, summary, f"{verdict} | - | {reason}"
+
 
 def rnd(rng):
     return {
@@ -141,9 +183,6 @@ def make(rng):
         desc, tech, verdict, why = rng.choice(BEHAVIORS)
         return ("Given this observed behavior, give the MITRE technique and verdict.",
                 desc, f"{verdict.capitalize()} | {tech} | {why}")
-    findings, expl = rng.choice(EXPLAIN)
-    return ("Explain this detection to an analyst in one sentence.",
-            json.dumps(findings), expl)
 
 def to_record(ex, fmt):
     instr, inp, out = ex
@@ -163,21 +202,29 @@ def main():
     ap.add_argument("--eval-frac", type=float, default=0.1)
     args = ap.parse_args()
 
+    if args.n < 2 or not 0 < args.eval_frac < 1:
+        ap.error("use at least two samples and an evaluation fraction between 0 and 1")
+
     rng = random.Random(20260618)
-    # De-dup on (instruction,input) so the small model isn't swamped by repeats.
-    seen, rows = set(), []
-    tries = 0
-    while len(rows) < args.n and tries < args.n * 40:
-        tries += 1
-        ex = make(rng)
-        key = (ex[0], ex[1])
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append(ex)
-    rng.shuffle(rows)
-    n_eval = int(len(rows) * args.eval_frac)
-    ev, tr = rows[:n_eval], rows[n_eval:]
+    seen = set()
+
+    def sample(count, review_cases):
+        rows = []
+        for _ in range(count * 40):
+            example = make_review(rng, review_cases) if len(rows) % 5 == 0 else make(rng)
+            key = example[:2]
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(example)
+            if len(rows) == count:
+                rng.shuffle(rows)
+                return rows
+        raise RuntimeError(f"could not generate {count} distinct examples")
+
+    n_eval = min(args.n - 1, max(1, int(args.n * args.eval_frac)))
+    tr = sample(args.n - n_eval, REVIEW_TRAIN)
+    ev = sample(n_eval, REVIEW_EVAL)
 
     with open(args.out, "w") as f:
         for ex in tr:

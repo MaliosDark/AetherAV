@@ -43,6 +43,7 @@ use aether_signatures::yara::YaraEngine;
 pub struct Scanner {
     config: Config,
     hashdb: HashDb,
+    packed_hashdb: Option<aether_signatures::packed::PackedHashDb>,
     #[cfg(feature = "yara")]
     yara: YaraEngine,
     /// ClamAV-style hex pattern engine (`.ndb`); empty if disabled/absent.
@@ -84,7 +85,7 @@ impl Scanner {
             let cfg = &config;
             let h = sc.spawn(move || -> Result<HashDb> {
                 let db = if cfg.engines.hash {
-                    HashDb::load(&cfg.engines.hash_db)?
+                    HashDb::load_with_bundled(&cfg.engines.hash_db)?
                 } else {
                     HashDb::empty()
                 };
@@ -187,9 +188,28 @@ impl Scanner {
             tracing::info!("on-device LLM classifier engine ready");
         }
 
+        let packed_hashdb = if config.engines.hash {
+            config
+                .engines
+                .packed_hash_db
+                .as_ref()
+                .map(|path| {
+                    aether_signatures::packed::PackedHashDb::open(path).map_err(|source| {
+                        Error::Io {
+                            path: path.clone(),
+                            source,
+                        }
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+
         Ok(Scanner {
             config,
             hashdb,
+            packed_hashdb,
             #[cfg(feature = "yara")]
             yara,
             ndb,
@@ -228,6 +248,10 @@ impl Scanner {
     /// Number of hash signatures currently loaded.
     pub fn signature_count(&self) -> usize {
         self.hashdb.len()
+    }
+
+    pub fn packed_signature_count(&self) -> u64 {
+        self.packed_hashdb.as_ref().map_or(0, |db| db.len())
     }
 
     /// Number of compiled YARA-X rules (0 when built without the `yara` feature).
@@ -285,11 +309,23 @@ impl Scanner {
         // --- Engine 1: exact hash match (highest confidence, short-circuits) ---
         // Matches on SHA-256, MD5 or SHA-1 so ClamAV's MD5 DB and legacy IOCs hit.
         if self.config.engines.hash {
-            if let Some(name) = self.hashdb.lookup_any(&hashes) {
-                verdicts.push(
-                    Verdict::malicious(EngineKind::Hash, name, 1.0)
-                        .with_detail("exact hash signature match"),
+            let name = self.hashdb.lookup_any(&hashes).or_else(|| {
+                let db = self.packed_hashdb.as_ref()?;
+                match db.contains(&hashes.sha256) {
+                    Ok(true) => Some("Packed.SHA256.ExactMatch"),
+                    Ok(false) => None,
+                    Err(error) => {
+                        tracing::warn!(%error, "packed signature lookup failed");
+                        None
+                    }
+                }
+            });
+            if let Some(name) = name {
+                let detail = self.hashdb.curated_source(&hashes.sha256).map_or_else(
+                    || "exact hash signature match".to_string(),
+                    |source| format!("Exact SHA-256 signature match. Source {source}"),
                 );
+                verdicts.push(Verdict::malicious(EngineKind::Hash, name, 1.0).with_detail(detail));
                 return ScanReport {
                     path: path.to_path_buf(),
                     hashes,
@@ -527,18 +563,49 @@ impl Scanner {
 
     /// Scan one file from disk, honoring the configured size limit.
     pub fn scan_file(&self, path: &Path) -> Result<ScanReport> {
-        let meta = std::fs::metadata(path).map_err(|source| Error::Io {
+        use std::io::Read;
+        let io_error = |source| Error::Io {
             path: path.to_path_buf(),
             source,
-        })?;
-
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let file = options.open(path).map_err(io_error)?;
+        let meta = file.metadata().map_err(io_error)?;
+        if !meta.is_file() {
+            return Err(io_error(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "scan target is not a regular file",
+            )));
+        }
         let limit = self.config.scan.max_file_size;
-        if limit > 0 && meta.len() > limit {
-            tracing::debug!(path = %path.display(), size = meta.len(), "skipping: over size limit");
+        let mut data = Vec::new();
+        let size = if limit != 0 && meta.len() > limit {
+            meta.len()
+        } else {
+            // A watched file can change while being read. Copy through a
+            // bounded reader instead of mapping memory another process owns.
+            let read_limit = if limit == 0 {
+                u64::MAX
+            } else {
+                limit.saturating_add(1)
+            };
+            file.take(read_limit)
+                .read_to_end(&mut data)
+                .map_err(io_error)?;
+            data.len() as u64
+        };
+        if limit != 0 && size > limit {
+            tracing::debug!(path = %path.display(), size, "skipping: over size limit");
             return Ok(ScanReport {
                 path: path.to_path_buf(),
                 hashes: aether_common::FileHashes {
-                    size: meta.len(),
+                    size,
                     ..Default::default()
                 },
                 verdicts: vec![],
@@ -546,28 +613,6 @@ impl Scanner {
             });
         }
 
-        // For large samples, memory-map to avoid copying the whole file into a
-        // heap buffer (keeps RSS flat when scanning multi-hundred-MB files).
-        // Small files and empty files take the simple read path (mmap of zero
-        // length is invalid on some platforms).
-        const MMAP_THRESHOLD: u64 = 2 * 1024 * 1024;
-        if meta.len() >= MMAP_THRESHOLD {
-            let file = std::fs::File::open(path).map_err(|source| Error::Io {
-                path: path.to_path_buf(),
-                source,
-            })?;
-            // SAFETY: the mapping is read-only and lives only for this call; we
-            // never mutate it and drop it before returning the (owned) report.
-            match unsafe { memmap2::Mmap::map(&file) } {
-                Ok(mmap) => return Ok(self.scan_bytes(path, &mmap)),
-                Err(e) => tracing::debug!(error = %e, "mmap failed; falling back to read"),
-            }
-        }
-
-        let data = std::fs::read(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
         Ok(self.scan_bytes(path, &data))
     }
 
@@ -577,7 +622,7 @@ impl Scanner {
     /// are logged and counted, never abort the whole run.
     pub fn scan_path(&self, root: &Path) -> Result<(Vec<ScanReport>, ScanSummary)> {
         let start = Instant::now();
-        let targets = self.collect_targets(root)?;
+        let (targets, traversal_errors) = self.collect_targets(root)?;
         tracing::info!(files = targets.len(), "starting scan");
 
         let reports: Vec<std::result::Result<ScanReport, ()>> = targets
@@ -589,7 +634,10 @@ impl Scanner {
             })
             .collect();
 
-        let mut summary = ScanSummary::default();
+        let mut summary = ScanSummary {
+            errors: traversal_errors,
+            ..ScanSummary::default()
+        };
         let mut ok = Vec::with_capacity(reports.len());
         for r in reports {
             match r {
@@ -605,9 +653,9 @@ impl Scanner {
     }
 
     /// Enumerate files under `root` according to the recursion setting.
-    fn collect_targets(&self, root: &Path) -> Result<Vec<PathBuf>> {
+    fn collect_targets(&self, root: &Path) -> Result<(Vec<PathBuf>, u64)> {
         if root.is_file() {
-            return Ok(vec![root.to_path_buf()]);
+            return Ok((vec![root.to_path_buf()], 0));
         }
         if !root.exists() {
             return Err(Error::Io {
@@ -621,14 +669,19 @@ impl Scanner {
         } else {
             1
         };
-        let targets = WalkDir::new(root)
-            .max_depth(max_depth)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .map(|e| e.into_path())
-            .collect();
-        Ok(targets)
+        let mut targets = Vec::new();
+        let mut errors = 0;
+        for entry in WalkDir::new(root).max_depth(max_depth) {
+            match entry {
+                Ok(entry) if entry.file_type().is_file() => targets.push(entry.into_path()),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "scan directory traversal error");
+                    errors += 1;
+                }
+            }
+        }
+        Ok((targets, errors))
     }
 }
 

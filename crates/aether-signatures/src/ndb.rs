@@ -174,7 +174,7 @@ impl NdbEngine {
 /// Parse a hex string with `??` wildcards into bytes (`None` == wildcard).
 fn parse_hex(hex: &str) -> Option<Vec<Option<u8>>> {
     let b = hex.as_bytes();
-    if b.len() % 2 != 0 {
+    if !b.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(b.len() / 2);

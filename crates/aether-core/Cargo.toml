@@ -23,7 +23,7 @@ aether-ml = { workspace = true }
 aether-llm = { workspace = true }
 aether-plugins = { workspace = true }
 tracing = { workspace = true }
-memmap2 = { workspace = true }
+libc = { workspace = true }
 walkdir = { workspace = true }
 rayon = { workspace = true }
 

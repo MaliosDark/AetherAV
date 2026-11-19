@@ -56,13 +56,17 @@ impl AnomalyEngine {
             return Vec::new();
         }
 
-        let images = images_of(events);
+        let mut images: HashMap<u32, String> = HashMap::new();
         let mut seen = HashSet::new();
         let mut verdicts = Vec::new();
 
         for ev in events {
             match &ev.action {
-                Action::ProcessSpawn { image, cmdline, .. } => {
+                Action::ProcessSpawn {
+                    child_pid,
+                    image,
+                    cmdline,
+                } => {
                     let child = basename(image);
                     let parent = images
                         .get(&ev.pid)
@@ -106,8 +110,23 @@ impl AnomalyEngine {
                             format!("command-line length anomaly (z={:.1}) for {child}", z),
                         ));
                     }
+                    images.insert(*child_pid, child);
                 }
                 Action::NetConnect { remote, port } => {
+                    if let (Some(image), Some(endpoint)) =
+                        (images.get(&ev.pid), model::endpoint_key(remote, *port))
+                    {
+                        if self.baseline.unusual_process_endpoint(image, &endpoint) {
+                            if seen.insert(format!("endpoint:{image}>{endpoint}")) {
+                                verdicts.push(anomaly(
+                                    "anomaly.process_endpoint_change",
+                                    0.72,
+                                    format!("{image} contacted {endpoint} outside its learned network profile"),
+                                ));
+                            }
+                            continue;
+                        }
+                    }
                     if !self.baseline.net_dests.contains_key(remote)
                         && seen.insert(format!("net:{remote}"))
                     {
@@ -134,19 +153,6 @@ impl AnomalyEngine {
         }
         verdicts
     }
-}
-
-fn images_of(events: &[Event]) -> HashMap<u32, String> {
-    let mut m = HashMap::new();
-    for ev in events {
-        if let Action::ProcessSpawn {
-            child_pid, image, ..
-        } = &ev.action
-        {
-            m.insert(*child_pid, basename(image));
-        }
-    }
-    m
 }
 
 fn anomaly(signature: &str, score: f32, detail: String) -> Verdict {
@@ -185,6 +191,30 @@ mod tests {
         engine.learn(&events);
         assert!(engine.baseline().is_trained());
         engine
+    }
+
+    #[test]
+    fn flags_port_change_for_trained_process_on_known_host() {
+        let engine = trained_engine();
+        let mut events = Event::from_json(
+            r#"[
+            {"pid":1,"action":"process_spawn","child_pid":2,"image":"explorer.exe"},
+            {"pid":2,"action":"net_connect","remote":"10.0.0.5","port":8443},
+            {"pid":2,"action":"net_connect","remote":"10.0.0.5","port":8443}
+        ]"#,
+        )
+        .unwrap();
+        let count = |events: &[Event]| {
+            engine
+                .score(events)
+                .iter()
+                .filter(|v| v.signature == "anomaly.process_endpoint_change")
+                .count()
+        };
+        assert_eq!(count(&events), 1);
+        events.swap(0, 2);
+        events[1].pid = 99;
+        assert_eq!(count(&events), 0);
     }
 
     #[test]

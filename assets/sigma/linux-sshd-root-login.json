@@ -1,0 +1,11 @@
+{
+  "title": "Successful root login over OpenSSH",
+  "id": "d12776e7-12d1-45d1-a591-615b4278b902",
+  "status": "experimental",
+  "logsource": {"product": "linux", "service": "sshd"},
+  "detection": {
+    "selection": {"Outcome": "success", "TargetUser": "root"},
+    "condition": "selection"
+  },
+  "level": "high"
+}

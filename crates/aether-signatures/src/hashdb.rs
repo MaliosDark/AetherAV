@@ -15,6 +15,7 @@ use std::path::Path;
 pub struct HashDb {
     /// sha256-hex -> threat name.
     map: HashMap<String, String>,
+    curated_sources: HashMap<&'static str, &'static str>,
     /// Negative pre-filter to skip the map on the common clean path.
     bloom: BloomFilter,
 }
@@ -24,6 +25,7 @@ impl HashDb {
     pub fn empty() -> HashDb {
         HashDb {
             map: HashMap::new(),
+            curated_sources: HashMap::new(),
             bloom: BloomFilter::new(1, 0.001),
         }
     }
@@ -43,10 +45,53 @@ impl HashDb {
         Self::from_text(&text)
     }
 
+    /// Load administrator signatures alongside the reviewed, bundled SHA-256
+    /// records. An installation with no external database still has coverage.
+    pub fn load_with_bundled(path: impl AsRef<Path>) -> Result<HashDb> {
+        let path = path.as_ref();
+        let bundled = include_str!("curated-sha256.db");
+        let external = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!(path = %path.display(), "using bundled hash signatures");
+                String::new()
+            }
+            Err(source) => {
+                return Err(Error::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })
+            }
+        };
+        let mut database = Self::from_lines(external.lines().chain(bundled.lines()))?;
+        let mut source = None;
+        for line in bundled.lines() {
+            if line.starts_with('#') {
+                if let Some((_, reference)) = line.split_once(" | ") {
+                    source = Some(reference);
+                }
+            } else if let (Some(reference), Some((hash, _))) = (source, line.split_once(' ')) {
+                database.curated_sources.insert(hash, reference);
+            }
+        }
+        Ok(database)
+    }
+
+    /// Source published for a bundled, reviewed SHA-256 signature.
+    pub fn curated_source(&self, sha256: &str) -> Option<&str> {
+        self.curated_sources
+            .get(sha256.to_ascii_lowercase().as_str())
+            .copied()
+    }
+
     /// Parse a database from its textual form.
     pub fn from_text(text: &str) -> Result<HashDb> {
+        Self::from_lines(text.lines())
+    }
+
+    fn from_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Result<HashDb> {
         let mut entries: Vec<(String, String)> = Vec::new();
-        for (lineno, raw) in text.lines().enumerate() {
+        for (lineno, raw) in lines.enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -77,7 +122,11 @@ impl HashDb {
             bloom.insert(hash.as_bytes());
             map.insert(hash, name);
         }
-        Ok(HashDb { map, bloom })
+        Ok(HashDb {
+            map,
+            bloom,
+            curated_sources: HashMap::new(),
+        })
     }
 
     /// Number of signatures loaded.
@@ -116,6 +165,26 @@ mod tests {
     use super::*;
 
     const EICAR_SHA256: &str = "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f";
+
+    #[test]
+    fn curated_signatures_are_loaded_without_an_external_db() {
+        let folder = tempfile::tempdir().unwrap();
+        let db = HashDb::load_with_bundled(folder.path().join("uninstalled.db")).unwrap();
+        assert_eq!(db.len(), 27);
+        let first = include_str!("curated-sha256.db")
+            .lines()
+            .find(|line| line.starts_with(|c: char| c.is_ascii_hexdigit()))
+            .unwrap();
+        let (hash, label) = first.split_once(' ').unwrap();
+        assert_eq!(db.lookup(hash), Some(label));
+        assert!(db.curated_source(hash).unwrap().starts_with("https://"));
+
+        let external = folder.path().join("external.db");
+        std::fs::write(&external, format!("{hash} MalwareBazaar.Sample\n")).unwrap();
+        let loaded = HashDb::load_with_bundled(&external).unwrap();
+        assert_eq!(loaded.lookup(hash), Some(label));
+        assert_eq!(loaded.curated_source(hash), db.curated_source(hash));
+    }
 
     #[test]
     fn parses_and_matches() {

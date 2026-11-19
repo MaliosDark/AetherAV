@@ -26,6 +26,7 @@ pub struct MemFinding {
     pub backing: String,
     pub severity: &'static str,
     pub detail: String,
+    pub kind: &'static str,
     /// Names of any content rules (YARA) that matched the region's bytes.
     pub matches: Vec<String>,
 }
@@ -39,6 +40,7 @@ struct MapRegion {
 
 /// Largest slice of a single region we will read for content scanning.
 const MAX_REGION_READ: u64 = 4 * 1024 * 1024;
+const MAX_READ_PER_PROCESS: u64 = 16 * 1024 * 1024;
 
 /// Process command name (`/proc/<pid>/comm`).
 pub fn process_name(pid: i32) -> String {
@@ -90,6 +92,45 @@ fn parse_maps(pid: i32) -> Vec<MapRegion> {
     out
 }
 
+fn classify_mapping(
+    exec: bool,
+    perms: &str,
+    path: &str,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    if !exec || matches!(path, "[vdso]" | "[vvar]" | "[vvar_vclock]" | "[vsyscall]") {
+        return None;
+    }
+    if path.starts_with("/memfd:") || path.starts_with("memfd:") || path.starts_with("/dev/shm/") {
+        return Some((
+            "memory.temp_backed_exec",
+            "medium",
+            "executable mapping backed by temporary memory storage",
+        ));
+    }
+    if perms.contains('w') {
+        return Some((
+            "memory.writable_exec",
+            "high",
+            "writable and executable memory",
+        ));
+    }
+    if path.is_empty() || path.starts_with("[anon") {
+        return Some((
+            "memory.anonymous_exec",
+            "medium",
+            "executable anonymous mapping",
+        ));
+    }
+    if path.ends_with(" (deleted)") {
+        return Some((
+            "memory.deleted_backing",
+            "medium",
+            "executable mapping with deleted backing file",
+        ));
+    }
+    None
+}
+
 /// Scan one process. `content_scan` is invoked with the bytes of each flagged
 /// region (e.g. a YARA closure) and returns the names of any matches; pass
 /// `|_| Vec::new()` to do structural detection only.
@@ -101,31 +142,24 @@ where
     let name = process_name(pid);
     let mut mem = fs::File::open(format!("/proc/{pid}/mem")).ok();
 
+    let mut remaining = MAX_READ_PER_PROCESS;
     for r in parse_maps(pid) {
         let exec = r.perms.contains('x');
-        let write = r.perms.contains('w');
         let anon = r.path.is_empty() || r.path.starts_with("[anon");
-        // Skip the special pseudo-regions we can never read meaningfully.
-        if r.path.starts_with("[v") {
-            continue; // [vdso] [vvar] [vsyscall]
-        }
-
-        let (mut severity, detail): (&'static str, String) = if exec && write {
-            (
-                "high",
-                "writable+executable memory (W^X violation - code injection / JIT-spray)".into(),
-            )
-        } else if exec && anon {
-            ("medium", "executable anonymous mapping not backed by a file (possible reflective/fileless code)".into())
-        } else {
+        let Some((kind, mut severity, detail)) = classify_mapping(exec, &r.perms, &r.path) else {
             continue;
         };
 
         // Content-scan the region's bytes when possible.
         let mut matches = Vec::new();
         if let Some(m) = mem.as_mut() {
-            let len = (r.end - r.start).min(MAX_REGION_READ) as usize;
+            let len = r
+                .end
+                .saturating_sub(r.start)
+                .min(MAX_REGION_READ)
+                .min(remaining) as usize;
             if len > 0 && m.seek(SeekFrom::Start(r.start)).is_ok() {
+                remaining -= len as u64;
                 let mut buf = vec![0u8; len];
                 if let Ok(n) = m.read(&mut buf) {
                     if n > 0 {
@@ -149,7 +183,8 @@ where
                 r.path.clone()
             },
             severity,
-            detail,
+            detail: detail.to_owned(),
+            kind,
             matches,
         });
     }
@@ -171,6 +206,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_memfd_and_deleted_backing_are_flagged() {
+        assert_eq!(
+            classify_mapping(true, "r-xp", "/memfd:sample (deleted)")
+                .unwrap()
+                .0,
+            "memory.temp_backed_exec"
+        );
+        assert_eq!(
+            classify_mapping(true, "r-xp", "/usr/lib/example.so (deleted)")
+                .unwrap()
+                .0,
+            "memory.deleted_backing"
+        );
+        assert!(classify_mapping(false, "rw-p", "/memfd:sample (deleted)").is_none());
+        assert!(classify_mapping(true, "r-xp", "[vdso]").is_none());
+    }
 
     #[test]
     fn parses_own_maps_and_finds_executable_regions() {

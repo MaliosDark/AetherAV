@@ -10,7 +10,7 @@ description = "Hash database, Bloom pre-filter and YARA-X engine for AetherAV."
 default = ["yara"]
 # YARA-X pulls a non-trivial dependency tree; gate it so the rest of the
 # engine can build in constrained CI without it.
-yara = ["dep:yara-x"]
+yara = ["dep:yara-x", "dep:rsa"]
 
 [dependencies]
 aether-common = { workspace = true }
@@ -23,6 +23,8 @@ aho-corasick = { workspace = true }
 tracing = { workspace = true }
 walkdir = { workspace = true }
 yara-x = { workspace = true, optional = true }
+# YARA-X 1.23 uses PKCS#1 v1.5 verification without enabling the feature.
+rsa = { version = "0.10", features = ["pkcs1v15"], optional = true, default-features = false }
 tlsh2 = { version = "1.1.0", features = ["diff"] }
 
 [dev-dependencies]

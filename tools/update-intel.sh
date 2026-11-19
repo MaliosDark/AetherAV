@@ -22,12 +22,16 @@ KEY="${ABUSE_CH_AUTH_KEY:-}"            # free key from https://auth.abuse.ch/
 FULL="${ABUSE_CH_FULL:-}"              # set =1 (with a key) to pull the FULL dumps (millions)
 HDR=(); [ -n "$KEY" ] && HDR=(-H "Auth-Key: $KEY")
 
-dl(){ curl -fsSL --max-time 180 "${HDR[@]}" -o "$2" "$1" || echo "  (warning: $1 unreachable)"; }
+dl(){ curl -fsS --max-time 180 -o "$2" "$1" || { rm -f -- "$2"; return 1; }; }
 # Download $1 -> if it's a zip, extract its first member -> $2.
-dlx(){ local z="$TMP/dl.zip"; dl "$1" "$z"; if [ -s "$z" ]; then
+dlx(){ local z="$TMP/dl.zip"; curl -fsS --max-time 180 "${HDR[@]}" -o "$z" "$1"; if [ -s "$z" ]; then
          if head -c2 "$z" | grep -q PK; then 7z e -y -bso0 -bsp0 -o"$TMP/x" "$z" >/dev/null 2>&1; mv "$TMP"/x/* "$2" 2>/dev/null; rm -rf "$TMP/x"; else mv "$z" "$2"; fi
        fi; }
-imp(){ [ -s "$1" ] && "$AETHER" intel import "$1" --format "$2" --store "$STORE" --feed-version "$VER" "${@:3}"; }
+imp(){
+  if [ -s "$1" ]; then
+    "$AETHER" intel import "$1" --format "$2" --store "$STORE" --feed-version "$VER" "${@:3}"
+  fi
+}
 
 if [ -n "$KEY" ] && [ -n "$FULL" ]; then
   echo "▸ downloading abuse.ch FULL dumps (Auth-Key set)…"
@@ -41,17 +45,24 @@ if [ -n "$KEY" ] && [ -n "$FULL" ]; then
   imp "$TMP/urlhaus.csv"   urlhaus
   imp "$TMP/feodo.csv"     feodo
 else
-  [ -n "$KEY" ] && echo "  (Auth-Key set - set ABUSE_CH_FULL=1 to pull full dumps)"
-  echo "▸ downloading abuse.ch recent feeds…"
-  dl "https://threatfox.abuse.ch/export/csv/recent/"        "$TMP/threatfox.csv"
-  dl "https://bazaar.abuse.ch/export/txt/sha256/recent/"    "$TMP/bazaar.txt"
-  dl "https://urlhaus.abuse.ch/downloads/csv_recent/"       "$TMP/urlhaus.csv"
-  dl "https://feodotracker.abuse.ch/downloads/ipblocklist.csv" "$TMP/feodo.csv"
-  echo "▸ importing recent feeds into $STORE …"
-  imp "$TMP/threatfox.csv" threatfox
-  imp "$TMP/bazaar.txt"    sha256   --threat "MalwareBazaar.Sample"
-  imp "$TMP/urlhaus.csv"   urlhaus
-  imp "$TMP/feodo.csv"     feodo
+  if [ -n "$KEY" ]; then
+    echo "▸ querying MalwareBazaar for recent SHA-256 signatures and family labels…"
+    python3 tools/refresh-malwarebazaar.py > "$TMP/bazaar.csv"
+    imp "$TMP/bazaar.csv" malwarebazaar
+
+    echo "▸ querying ThreatFox for recent indicators…"
+    curl -fsS --max-time 45 "${HDR[@]}" -H 'Content-Type: application/json' \
+      --data '{"query":"get_iocs","days":2}' https://threatfox-api.abuse.ch/api/v1/ \
+      -o "$TMP/threatfox.json"
+    imp "$TMP/threatfox.json" threatfox-json
+  else
+    echo "  MalwareBazaar and ThreatFox require ABUSE_CH_AUTH_KEY; skipping them" >&2
+  fi
+  if dl "https://feodotracker.abuse.ch/downloads/ipblocklist.csv" "$TMP/feodo.csv"; then
+    imp "$TMP/feodo.csv" feodo
+  else
+    echo "  (warning: Feodo Tracker could not be reached)" >&2
+  fi
 fi
 
 # Optional: fetch a public YARA ruleset into assets/rules (downloaded on YOUR
@@ -71,8 +82,8 @@ echo "▸ exporting hash signatures…"
 
 # Keep the bundled base (EICAR test entry) and append the intel hashes, deduped.
 BASE="assets/signatures/hashes.db"
-{ grep -v '^[[:space:]]*$' "$BASE" 2>/dev/null || true; cat "$TMP/intel.db"; } \
-  | sort -u -k1,1 > "$BASE.new"
+{ cat "$TMP/intel.db"; grep -v '^[[:space:]]*$' "$BASE" 2>/dev/null || true; } \
+  | LC_ALL=C sort -s -u -k1,1 > "$BASE.new"
 mv "$BASE.new" "$BASE"
 
 echo "✓ signature DB updated: $(grep -cvE '^\s*(#|$)' "$BASE") signatures in $BASE"

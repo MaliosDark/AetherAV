@@ -5,6 +5,10 @@
 //!   aether config init [--output aether.toml]   write a default config file
 //!   aether info                                 show engine/build status
 
+mod defense;
+mod evaluation;
+mod ssh_events;
+
 use aether_common::logging::{self, LogFormat};
 use aether_common::ThreatLevel;
 use aether_config::Config;
@@ -111,6 +115,14 @@ enum Command {
     Signfile(SignfileArgs),
     /// Verify a release artifact's detached signature against the trusted public key.
     Verifyfile(VerifyfileArgs),
+    /// Build a compact exact-match index from a reviewed sorted SHA-256 list.
+    PackSignatures(defense::PackArgs),
+    /// Inspect an analyst-supplied sample and optionally write an approved hash.
+    LearnAttack(defense::LearnAttackArgs),
+    /// Correlate trusted OpenSSH journal exports from multiple hosts.
+    SshEvents(ssh_events::SshEventsArgs),
+    /// Review exported SSH, firewall and administration settings.
+    HostAudit(defense::HostAuditArgs),
     /// Configuration helpers.
     #[command(subcommand)]
     Config(ConfigCmd),
@@ -145,7 +157,7 @@ enum IntelCmd {
     Import {
         file: PathBuf,
         /// Source format.
-        #[arg(long, default_value = "threatfox", value_parser = ["threatfox", "sha256", "misp", "urlhaus", "feodo", "malwarebazaar", "iplist", "domainlist"])]
+        #[arg(long, default_value = "threatfox", value_parser = ["threatfox", "threatfox-json", "sha256", "misp", "urlhaus", "feodo", "malwarebazaar", "iplist", "domainlist"])]
         format: String,
         #[arg(long, default_value = "assets/models/intel.json")]
         store: PathBuf,
@@ -191,6 +203,12 @@ struct BehaviorArgs {
     /// Emit machine-readable JSON instead of a human report.
     #[arg(long)]
     json: bool,
+    /// Score anomalies against a baseline learned from benign traces.
+    #[arg(long)]
+    baseline: Option<PathBuf>,
+    /// Ask the configured local Aegis model to review a summary of the evidence.
+    #[arg(long)]
+    aegis: bool,
 }
 
 #[derive(Debug, Args)]
@@ -243,6 +261,9 @@ struct ProtectArgs {
     /// Path(s) whose filesystem(s) to protect - every open/exec on them is checked.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
+    /// Inspect execution only and require a dedicated filesystem mount point.
+    #[arg(long)]
+    exec_only: bool,
     /// Max bytes read from each file for the verdict.
     #[arg(long, default_value_t = 8 * 1024 * 1024)]
     max_read: usize,
@@ -282,6 +303,9 @@ struct RansomguardArgs {
     /// Vault directory for the snapshot (default: <dir>/.aether-vault).
     #[arg(long)]
     vault: Option<PathBuf>,
+    /// Allow a single snapshot restore after an incident. Default is alert only.
+    #[arg(long)]
+    restore: bool,
 }
 
 #[derive(Debug, Args)]
@@ -463,6 +487,9 @@ struct EvalArgs {
     /// Directory of known-malicious files (false negatives are missed here).
     #[arg(long)]
     malware: PathBuf,
+    /// Fail unless the 95% confidence bounds satisfy the release targets.
+    #[arg(long)]
+    release_gate: bool,
     /// Also run `clamscan` on the same dirs for a head-to-head (needs ClamAV).
     #[arg(long)]
     clamav: bool,
@@ -486,6 +513,33 @@ struct MonitorArgs {
     /// Optional baseline model to also flag anomalies against.
     #[arg(long, short = 'm')]
     baseline: Option<PathBuf>,
+    /// Scan binaries of observed processes via /proc/PID/exe on Linux.
+    #[arg(long)]
+    scan_executables: bool,
+    /// Inspect already-running executables when monitoring starts.
+    #[arg(long, requires = "scan_executables")]
+    scan_running: bool,
+    /// Inspect observed processes for fileless executable mappings on Linux.
+    #[arg(long)]
+    fileless: bool,
+    /// Recheck existing processes for fileless mappings every N seconds (0 disables).
+    #[arg(long, requires = "fileless")]
+    fileless_rescan_secs: Option<u64>,
+    /// Emit reviewed-signature candidates when independent engines agree.
+    #[arg(long, requires = "scan_executables")]
+    propose_signatures: bool,
+    /// Save deduplicated candidates to an existing private review directory.
+    #[arg(long, requires = "propose_signatures")]
+    candidate_dir: Option<PathBuf>,
+    /// Ask the configured local Aegis backend to review redacted detector evidence.
+    #[arg(long)]
+    aegis: bool,
+    /// Emit SIEM-compatible JSON Lines instead of display messages.
+    #[arg(long)]
+    jsonl: bool,
+    /// Stable host label for multi-server log collection.
+    #[arg(long, default_value = "local")]
+    host: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -522,7 +576,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Scan(args) => run_scan(config, args),
-        Command::Behavior(args) => run_behavior(args),
+        Command::Behavior(args) => run_behavior(config, args),
         Command::Emulate(args) => run_emulate(args),
         Command::Learn(args) => run_learn(args),
         Command::Anomaly(args) => run_anomaly(args),
@@ -531,7 +585,7 @@ fn main() -> ExitCode {
         Command::Update(args) => run_update(config, args),
         Command::ModelUpdate(args) => run_model_update(config, args),
         Command::Serve(args) => run_serve(config, args),
-        Command::Monitor(args) => run_monitor(args),
+        Command::Monitor(args) => run_monitor(config, args),
         Command::Watch(args) => run_watch(config, args),
         Command::Protect(args) => run_protect(config, args),
         Command::Memscan(args) => run_memscan(config, args),
@@ -549,7 +603,7 @@ fn main() -> ExitCode {
         Command::Tlsh(args) => run_tlsh(args),
         Command::Imphash(args) => run_imphash(args),
         Command::Timestomp(args) => run_timestomp(args),
-        Command::Eval(args) => run_eval(config, args),
+        Command::Eval(args) => evaluation::run(config, args),
         Command::Reputation(args) => run_reputation(args),
         Command::Cve(args) => run_cve(args),
         Command::Feedsign(args) => run_feedsign(args),
@@ -557,6 +611,10 @@ fn main() -> ExitCode {
         Command::Signfile(args) => run_signfile(args),
         Command::Verifyfile(args) => run_verifyfile(args),
         Command::Submit(args) => run_submit(args),
+        Command::PackSignatures(args) => defense::pack_signatures(args),
+        Command::LearnAttack(args) => defense::learn_attack(config, args),
+        Command::SshEvents(args) => ssh_events::run(args),
+        Command::HostAudit(args) => defense::host_audit(args),
         Command::Config(ConfigCmd::Init { output }) => run_config_init(&config, output),
         Command::Info => run_info(config),
     };
@@ -650,28 +708,65 @@ fn run_scan(mut config: Config, args: ScanArgs) -> Result<ExitCode> {
 }
 
 /// Analyze a behavioral event trace. Exit codes match `scan`.
-fn run_behavior(args: BehaviorArgs) -> Result<ExitCode> {
-    use aether_behavior::BehaviorEngine;
+fn run_behavior(config: Config, args: BehaviorArgs) -> Result<ExitCode> {
+    use aether_anomaly::{AnomalyEngine, Baseline};
+    use aether_behavior::{BehaviorEngine, Event};
+    use std::io::Read;
 
-    let json = std::fs::read_to_string(&args.trace)
+    const MAX_TRACE_BYTES: u64 = 16 * 1024 * 1024;
+    let mut json = String::new();
+    std::fs::File::open(&args.trace)
+        .with_context(|| format!("opening trace {}", args.trace.display()))?
+        .take(MAX_TRACE_BYTES + 1)
+        .read_to_string(&mut json)
         .with_context(|| format!("reading trace {}", args.trace.display()))?;
-    let report = BehaviorEngine::new()
-        .analyze_json(&json)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    anyhow::ensure!(
+        json.len() as u64 <= MAX_TRACE_BYTES,
+        "behavior trace exceeds 16 MiB"
+    );
+    let events = Event::from_json(&json).map_err(anyhow::Error::msg)?;
+    let mut report = BehaviorEngine::new().analyze(&events);
+
+    if let Some(path) = args.baseline {
+        let baseline = Baseline::load_or_new(&path)?;
+        anyhow::ensure!(
+            baseline.is_trained(),
+            "baseline {} needs benign training data",
+            path.display()
+        );
+        report
+            .verdicts
+            .extend(AnomalyEngine::new(baseline).score(&events));
+    }
+
+    if args.aegis {
+        let model = aether_llm::LlmClassifier::new(aether_llm::LlmConfig {
+            enabled: true,
+            runner: config.engines.llm_runner,
+            model: config.engines.llm_model,
+            server_url: config.engines.llm_server_url,
+            ..Default::default()
+        });
+        anyhow::ensure!(model.is_available(), "no usable local Aegis backend");
+        if !report.verdicts.is_empty() {
+            let summary = report.triage_summary(&events);
+            if let Some(verdict) = model.review_behavior(&summary) {
+                report.verdicts.push(verdict);
+            }
+        }
+    }
 
     if args.json {
         for v in &report.verdicts {
             println!(
-                r#"{{"signature":"{}","level":"{}","score":{:.3},"mitre":[{}],"detail":"{}"}}"#,
-                v.signature,
-                v.level,
-                v.score,
-                v.mitre
-                    .iter()
-                    .map(|m| format!("\"{m}\""))
-                    .collect::<Vec<_>>()
-                    .join(","),
-                v.detail.as_deref().unwrap_or("").replace('"', "\\\"")
+                "{}",
+                serde_json::json!({
+                    "signature": v.signature,
+                    "level": v.level.to_string(),
+                    "score": v.score,
+                    "mitre": v.mitre,
+                    "detail": v.detail.as_deref().unwrap_or(""),
+                })
             );
         }
     } else {
@@ -865,30 +960,73 @@ fn update_once(
     hash_db: &std::path::Path,
 ) -> Result<(usize, u64)> {
     use aether_intel::{Feed, IntelStore};
-    let (code, body) = http_get(url)?;
-    if code != 200 {
-        return Err(anyhow::anyhow!("feed fetch HTTP {code}"));
-    }
-    let feed = Feed::from_json(&body).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let mut store =
-        IntelStore::load_or_new(store_path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    // apply_signed enforces the Ed25519 trust anchor + anti-rollback. Integrity
-    // holds even over plain HTTP, because a forged feed can't be signed.
-    let added = store
-        .apply_signed(&feed)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    if added > 0 {
-        store
-            .save(store_path)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        // Merge the store's sha256 IOCs into the on-disk hash DB and dedup.
-        let base = std::fs::read_to_string(hash_db).unwrap_or_default();
-        let mut lines: std::collections::BTreeSet<String> =
-            base.lines().map(|s| s.to_string()).collect();
-        for l in store.export_hashdb().lines() {
-            lines.insert(l.to_string());
+    use std::io::{Read, Write};
+
+    const MAX_FEED_BYTES: u64 = 256 * 1024 * 1024;
+    let response = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(180))
+        .call()?;
+    anyhow::ensure!(
+        response.status() == 200,
+        "feed fetch HTTP {}",
+        response.status()
+    );
+    let mut body = String::new();
+    response
+        .into_reader()
+        .take(MAX_FEED_BYTES + 1)
+        .read_to_string(&mut body)?;
+    anyhow::ensure!(body.len() as u64 <= MAX_FEED_BYTES, "feed exceeds 256 MiB");
+    let feed = Feed::from_json(&body)?;
+    drop(body);
+    // Serialize updates before reading the stored version so an older feed
+    // cannot overwrite a newer one applied by a concurrent updater.
+    let mut lock_path = store_path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    let update_lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .context("opening the signature update lock")?;
+    update_lock.lock().context("locking signature updates")?;
+    let mut store = IntelStore::load_or_new(store_path)?;
+    let current = store.version;
+    let added = store.apply_signed(&feed)?;
+    if added != 0 {
+        let base = match std::fs::read_to_string(hash_db) {
+            Ok(base) => base,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(err).context("reading hash database before update"),
+        };
+        let exported = store.export_hashdb();
+        let mut lines = std::collections::BTreeMap::new();
+        for line in base.lines().chain(exported.lines()) {
+            let trimmed = line.trim();
+            if let Some(hash) = trimmed.split_whitespace().next() {
+                lines.insert(hash.to_ascii_lowercase(), trimmed);
+            }
         }
-        let _ = std::fs::write(hash_db, lines.into_iter().collect::<Vec<_>>().join("\n"));
+        let parent = hash_db
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+        {
+            let mut writer = std::io::BufWriter::new(tmp.as_file_mut());
+            for line in lines.values() {
+                writeln!(writer, "{line}")?;
+            }
+            writer.flush()?;
+        }
+        if let Ok(meta) = std::fs::metadata(hash_db) {
+            tmp.as_file().set_permissions(meta.permissions())?;
+        }
+        tmp.as_file().sync_all()?;
+        tmp.persist(hash_db)?;
+    }
+    if current != store.version {
+        store.save(store_path)?;
     }
     Ok((added, store.version))
 }
@@ -918,6 +1056,7 @@ fn run_update(config: Config, args: UpdateArgs) -> Result<ExitCode> {
         match update_once(&url, &store_path, &hash_db) {
             Ok((0, ver)) => println!("up to date (feed v{ver})"),
             Ok((added, ver)) => println!("updated: +{added} indicators, now at feed v{ver}"),
+            Err(e) if !args.watch => return Err(e).context("update failed"),
             Err(e) => eprintln!("update failed: {e}"),
         }
         if !args.watch {
@@ -1051,6 +1190,7 @@ fn run_intel(cmd: IntelCmd) -> Result<ExitCode> {
                 .with_context(|| format!("reading {}", file.display()))?;
             let feed = match format.as_str() {
                 "threatfox" => Feed::from_threatfox_csv(&text, feed_version),
+                "threatfox-json" => Feed::from_threatfox_json(&text, feed_version),
                 "sha256" => Feed::from_sha256_list(&text, feed_version, &threat),
                 "misp" => Feed::from_misp_json(&text, feed_version, &threat),
                 "urlhaus" => Feed::from_urlhaus_csv(&text, feed_version),
@@ -1059,7 +1199,7 @@ fn run_intel(cmd: IntelCmd) -> Result<ExitCode> {
                 "iplist" => Feed::from_ipv4_list(&text, feed_version, &threat),
                 "domainlist" => Feed::from_domain_list(&text, feed_version, &threat),
                 other => return Err(anyhow::anyhow!(
-                    "unknown format '{other}' (threatfox|sha256|misp|urlhaus|feodo|malwarebazaar|iplist|domainlist)"
+                    "unknown format '{other}' (threatfox|threatfox-json|sha256|misp|urlhaus|feodo|malwarebazaar|iplist|domainlist)"
                 )),
             }
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -1131,69 +1271,300 @@ fn run_intel(cmd: IntelCmd) -> Result<ExitCode> {
 }
 
 /// Real-time monitor loop: poll live process events and run the engines.
-fn run_monitor(args: MonitorArgs) -> Result<ExitCode> {
+fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
     use aether_anomaly::{AnomalyEngine, Baseline};
     use aether_realtime::{Collector, EventSource, ProcMonitor};
-    use std::collections::HashSet;
-    use std::time::Duration;
+    use std::collections::{HashSet, VecDeque};
+    use std::time::{Duration, Instant};
 
-    let mut monitor = ProcMonitor::new();
-    monitor.prime(); // ignore the existing process table; report only new spawns
-    let mut collector = Collector::new(10_000);
-
-    let anomaly = match &args.baseline {
-        Some(p) => {
-            let b = Baseline::load_or_new(p).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            Some(AnomalyEngine::new(b))
-        }
-        None => None,
-    };
-
-    println!(
-        "real-time monitor started ({} source) - interval {}ms{}",
-        monitor.name(),
-        args.interval_ms,
-        if args.ticks == 0 {
-            ", until interrupted"
-        } else {
-            ""
-        }
+    anyhow::ensure!(args.interval_ms > 0, "monitor interval must be positive");
+    anyhow::ensure!(
+        !args.host.is_empty() && args.host.len() <= 253 && !args.host.chars().any(char::is_control),
+        "invalid host label"
     );
+    if !cfg!(target_os = "linux") {
+        anyhow::bail!("the live process source is currently available on Linux");
+    }
+    let aegis = args.aegis.then(|| {
+        aether_llm::LlmClassifier::new(aether_llm::LlmConfig {
+            enabled: true,
+            runner: config.engines.llm_runner.clone(),
+            model: config.engines.llm_model.clone(),
+            server_url: config.engines.llm_server_url.clone(),
+            ..Default::default()
+        })
+    });
+    anyhow::ensure!(
+        aegis.as_ref().is_none_or(|model| model.is_available()),
+        "no usable local Aegis backend"
+    );
+    let review_queue = aegis.map(|model| {
+        let (send, requests) = std::sync::mpsc::sync_channel::<String>(1);
+        let (responses, receive) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            while let Ok(summary) = requests.recv() {
+                if let Some(verdict) = model.review_behavior(&summary) {
+                    let _ = responses.try_send(verdict);
+                }
+            }
+        });
+        (send, receive)
+    });
+    let scanner = if args.scan_executables || args.fileless {
+        config.engines.llm = false;
+        config.engines.plugins = false;
+        config.engines.reputation = false;
+        Some(Scanner::new(config)?)
+    } else {
+        None
+    };
+    let anomaly = args
+        .baseline
+        .as_ref()
+        .map(|p| Baseline::load_or_new(p).map(AnomalyEngine::new))
+        .transpose()?;
+    let mut monitor = ProcMonitor::new();
+    if !args.scan_running {
+        monitor.prime();
+    }
+    let mut pending = VecDeque::new();
+    let mut memory_pending = VecDeque::new();
+    let mut rescan_after = Instant::now();
+    let mut rescan_offset = 0;
+    let rescan_interval = args
+        .fileless_rescan_secs
+        .filter(|&n| n > 0)
+        .map(Duration::from_secs);
+    const PENDING_LIMIT: usize = 4096;
+    const INSPECTIONS_PER_POLL: usize = 32;
+    const MEMORY_RECHECKS_PER_POLL: usize = 8;
+    if let Some(directory) = &args.candidate_dir {
+        anyhow::ensure!(directory.is_dir(), "candidate directory must already exist");
+    }
+    let mut collector = Collector::new(10_000);
+    let mut printed = HashSet::new();
+    let mut last_review: Option<Instant> = None;
+    tracing::info!(source=monitor.name(), host=%args.host, "real-time monitor started");
 
-    let mut printed: HashSet<String> = HashSet::new();
-    let mut tick = 0u64;
+    let mut tick = 0;
     loop {
         std::thread::sleep(Duration::from_millis(args.interval_ms));
         let events = monitor.poll();
-        let new_count = events.len();
-        collector.ingest(events);
-
-        let mut verdicts = collector.analyze();
-        if let Some(eng) = &anomaly {
-            verdicts.extend(eng.score(collector.window()));
+        let direct = if let Some(scanner) = &scanner {
+            let mut skipped = 0;
+            for event in &events {
+                if let aether_behavior::Action::ProcessSpawn { child_pid, .. } = event.action {
+                    if let Some(identity) = monitor.process_identity(child_pid) {
+                        if pending.len() < PENDING_LIMIT {
+                            pending.push_back((child_pid, identity));
+                        } else {
+                            skipped += 1;
+                        }
+                    }
+                }
+            }
+            if skipped > 0 {
+                tracing::warn!(skipped, "live inspection queue is full");
+            }
+            let mut batch = Vec::new();
+            while batch.len() < INSPECTIONS_PER_POLL {
+                let Some((pid, key)) = pending.pop_front() else {
+                    break;
+                };
+                if monitor.process_identity(pid) == Some(key) {
+                    batch.push(pid);
+                }
+            }
+            let mut findings = inspect_processes(scanner, &batch, &args, args.scan_executables);
+            if let Some(interval) = rescan_interval {
+                if memory_pending.is_empty() && rescan_after.elapsed() >= interval {
+                    let mut processes = monitor.process_identities();
+                    processes.sort_unstable_by_key(|&(pid, _)| pid);
+                    // Rotate the starting point to avoid starving higher PIDs on large hosts.
+                    if !processes.is_empty() {
+                        let count = processes.len();
+                        processes.rotate_left(rescan_offset % count);
+                        rescan_offset = (rescan_offset + PENDING_LIMIT) % count;
+                    }
+                    if processes.len() > PENDING_LIMIT {
+                        tracing::warn!(
+                            count = processes.len(),
+                            "periodic memory scan capped at 4096 processes"
+                        );
+                    }
+                    memory_pending.extend(processes.into_iter().take(PENDING_LIMIT));
+                    rescan_after = Instant::now();
+                }
+                let mut memory_batch = Vec::new();
+                for _ in 0..MEMORY_RECHECKS_PER_POLL {
+                    let Some((pid, key)) = memory_pending.pop_front() else {
+                        break;
+                    };
+                    if monitor.process_identity(pid) == Some(key) {
+                        memory_batch.push(pid);
+                    }
+                }
+                findings.extend(inspect_processes(scanner, &memory_batch, &args, false));
+            }
+            findings
+        } else {
+            Vec::new()
+        };
+        let mut findings = Vec::new();
+        if !events.is_empty() || !direct.is_empty() {
+            collector.ingest(events);
+            let mut report = collector.report();
+            if let Some(engine) = &anomaly {
+                report.verdicts.extend(engine.score(collector.window()));
+            }
+            // Only engine-owned behavior IDs are sent to Aegis. Scan labels
+            // may include names from signatures or entries inside archives.
+            report.verdicts.extend(
+                direct
+                    .iter()
+                    .filter(|v| v.engine == aether_common::EngineKind::Behavioral)
+                    .cloned(),
+            );
+            let summary = (review_queue.is_some() && !report.verdicts.is_empty())
+                .then(|| report.triage_summary(collector.window()));
+            report.verdicts.extend(
+                direct
+                    .into_iter()
+                    .filter(|v| v.engine != aether_common::EngineKind::Behavioral),
+            );
+            if printed.len() >= 10_000 {
+                printed.clear();
+            }
+            for verdict in &report.verdicts {
+                let key = (verdict.signature.clone(), verdict.detail.clone());
+                if printed.insert(key) {
+                    findings.push(verdict.clone());
+                }
+            }
+            if !findings.is_empty()
+                && last_review.is_none_or(|t| t.elapsed() >= Duration::from_secs(20))
+            {
+                if let (Some((requests, _)), Some(summary)) = (&review_queue, summary) {
+                    let _ = requests.try_send(summary);
+                    last_review = Some(Instant::now());
+                }
+            }
         }
-        for v in &verdicts {
-            let key = format!("{}|{}", v.signature, v.detail.as_deref().unwrap_or(""));
-            if printed.insert(key) {
+        if let Some((_, responses)) = &review_queue {
+            findings.extend(responses.try_iter());
+        }
+        for verdict in findings {
+            if args.jsonl {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_micros() as u64);
+                println!(
+                    "{}",
+                    serde_json::json!({"schema":"aether.security_event.v1",
+                        "event_time_us":timestamp,"host":args.host,"rule_id":verdict.signature,
+                        "severity":verdict.level.to_string().to_ascii_lowercase(),"verdict":verdict})
+                );
+            } else {
                 println!(
                     "{:<11} [{}] {}",
-                    v.level.to_string(),
-                    v.signature,
-                    v.detail.as_deref().unwrap_or("")
+                    verdict.level,
+                    verdict.signature,
+                    verdict.detail.as_deref().unwrap_or("")
                 );
             }
         }
-        if new_count > 0 {
-            println!("· tick {tick}: {new_count} new process event(s)");
-        }
-
         tick += 1;
         if args.ticks != 0 && tick >= args.ticks {
             break;
         }
     }
-    println!("monitor stopped after {tick} ticks");
     Ok(ExitCode::SUCCESS)
+}
+
+fn inspect_processes(
+    scanner: &Scanner,
+    pids: &[u32],
+    args: &MonitorArgs,
+    scan_executable: bool,
+) -> Vec<aether_common::Verdict> {
+    use aether_common::{EngineKind, Verdict};
+    let mut output = Vec::new();
+    for &child_pid in pids {
+        let executable = PathBuf::from(format!("/proc/{child_pid}/exe"));
+        if scan_executable {
+            match scanner.scan_file(&executable) {
+                Ok(report) => {
+                    if args.propose_signatures && defense::eligible_candidate(&report) {
+                        if let Some(directory) = &args.candidate_dir {
+                            if let Err(error) =
+                                defense::record_candidate(directory, &args.host, &report)
+                            {
+                                tracing::warn!(%error, "could not save candidate");
+                            }
+                        }
+                        output.push(
+                            Verdict::suspicious(
+                                EngineKind::Heuristic,
+                                "learning.sha256_candidate",
+                                0.8,
+                            )
+                            .with_detail(format!(
+                                "PID {child_pid}. Proposed SHA-256 {} awaits analyst approval",
+                                report.hashes.sha256
+                            )),
+                        );
+                    }
+                    output.extend(report.verdicts.into_iter().map(|mut v| {
+                        v.detail = Some(format!(
+                            "PID {child_pid}. {}",
+                            v.detail.as_deref().unwrap_or("executable signature")
+                        ));
+                        v
+                    }));
+                }
+                Err(error) => {
+                    tracing::debug!(pid=child_pid,%error,"executable unavailable for scanning")
+                }
+            }
+        }
+        if args.fileless {
+            let Ok(pid) = i32::try_from(child_pid) else {
+                continue;
+            };
+            let findings = aether_realtime::memscan::scan_pid(pid, |bytes| {
+                scanner
+                    .scan_bytes(&executable, bytes)
+                    .verdicts
+                    .into_iter()
+                    .filter(|v| v.level == ThreatLevel::Malicious)
+                    .map(|v| v.signature)
+                    .collect()
+            });
+            for finding in findings {
+                output.push(Verdict {
+                    engine: EngineKind::Behavioral,
+                    level: if finding.matches.is_empty() {
+                        ThreatLevel::Suspicious
+                    } else {
+                        ThreatLevel::Malicious
+                    },
+                    signature: finding.kind.into(),
+                    score: if finding.matches.is_empty() {
+                        0.65
+                    } else {
+                        0.95
+                    },
+                    mitre: Vec::new(),
+                    detail: Some(format!(
+                        "PID {child_pid}. {}. Content matches {}",
+                        finding.detail,
+                        finding.matches.len()
+                    )),
+                });
+            }
+        }
+    }
+    output
 }
 
 /// Watch outbound DNS queries and flag lookups of known-bad domains.
@@ -1900,6 +2271,8 @@ fn run_protect(mut config: Config, args: ProtectArgs) -> Result<ExitCode> {
     // heuristics + ML), never the LLM or full sandbox, per open.
     config.engines.llm = false;
     config.engines.sandbox = false;
+    config.engines.plugins = false;
+    config.engines.reputation = false;
     let scanner = Scanner::new(config).context("failed to initialize scanner")?;
     let mut vault = match &args.quarantine {
         Some(dir) => {
@@ -1913,10 +2286,20 @@ fn run_protect(mut config: Config, args: ProtectArgs) -> Result<ExitCode> {
         Ok(_) => tracing::info!("self-protection enabled (non-dumpable, OOM-protected)"),
         Err(e) => tracing::warn!(error = %e, "self-protection unavailable"),
     }
-    let guard = OnAccessGuard::new(&args.paths).map_err(|e| anyhow::anyhow!(e))?;
+    let guard = if args.exec_only {
+        OnAccessGuard::executable_mounts(&args.paths)
+    } else {
+        OnAccessGuard::new(&args.paths)
+    }
+    .map_err(|e| anyhow::anyhow!(e))?;
     println!(
-        "kernel on-access protection ACTIVE on {:?} - every open/exec is checked. Ctrl-C to stop.",
-        args.paths
+        "kernel on-access protection ACTIVE on {:?} ({})",
+        args.paths,
+        if args.exec_only {
+            "execution"
+        } else {
+            "open and execution"
+        }
     );
     let mut blocked = 0u64;
     guard
@@ -2210,11 +2593,14 @@ fn run_ransomguard(args: RansomguardArgs) -> Result<ExitCode> {
         args.dir.display()
     );
     let incident = guard
-        .run(|p| tracing::debug!(path = %p.display(), "changed"))
+        .watch(
+            args.restore,
+            |p| tracing::debug!(path = %p.display(), "changed"),
+        )
         .map_err(|e| anyhow::anyhow!(e))?;
     println!("\n⚠ RANSOMWARE DETECTED - {}", incident.reason);
     println!(
-        "   {} files affected · {} restored from snapshot (rollback complete)",
+        "   {} event paths affected · {} files restored from snapshot",
         incident.modified, incident.restored
     );
     Ok(ExitCode::FAILURE)
@@ -2529,82 +2915,6 @@ fn run_submit(args: SubmitArgs) -> Result<ExitCode> {
     }
 }
 
-/// Evaluate detection quality on labeled directories and print metrics.
-fn run_eval(config: Config, args: EvalArgs) -> Result<ExitCode> {
-    let scanner = Scanner::new(config).context("failed to initialize scanner")?;
-
-    let (clean, _) = scanner
-        .scan_path(&args.clean)
-        .with_context(|| format!("scanning clean set {}", args.clean.display()))?;
-    let (malware, _) = scanner
-        .scan_path(&args.malware)
-        .with_context(|| format!("scanning malware set {}", args.malware.display()))?;
-
-    let fp = clean.iter().filter(|r| r.is_threat()).count();
-    let tn = clean.len() - fp;
-    let tp = malware.iter().filter(|r| r.is_threat()).count();
-    let fn_ = malware.len() - tp;
-
-    let pct = |n: usize, d: usize| {
-        if d == 0 {
-            0.0
-        } else {
-            100.0 * n as f64 / d as f64
-        }
-    };
-    let precision = pct(tp, tp + fp);
-    let recall = pct(tp, tp + fn_); // detection rate
-    let fpr = pct(fp, fp + tn);
-    let accuracy = pct(tp + tn, tp + tn + fp + fn_);
-
-    println!("AetherAV detection evaluation");
-    println!("  clean samples:   {}", clean.len());
-    println!("  malware samples: {}", malware.len());
-    println!("  +---------------+----------+----------+");
-    println!("  |               | flagged  | clean    |");
-    println!("  | malware (P)   | TP {tp:<5} | FN {fn_:<5} |");
-    println!("  | benign  (N)   | FP {fp:<5} | TN {tn:<5} |");
-    println!("  +---------------+----------+----------+");
-    println!("  detection rate (recall): {recall:.2}%");
-    println!("  false-positive rate:     {fpr:.2}%");
-    println!("  precision:               {precision:.2}%");
-    println!("  accuracy:                {accuracy:.2}%");
-
-    if args.clamav {
-        match (
-            clamscan_detections(&args.malware),
-            clamscan_detections(&args.clean),
-        ) {
-            (Some(mdet), Some(cfp)) => {
-                println!("\nClamAV (clamscan) head-to-head");
-                println!(
-                    "  detection rate: {:.2}%  ({mdet}/{} malware)",
-                    pct(mdet, malware.len()),
-                    malware.len()
-                );
-                println!("  false positives: {cfp} on the clean set");
-            }
-            _ => println!("\n(clamscan not available - install ClamAV for a head-to-head)"),
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Count files ClamAV flags in `dir` (`<file>: <sig> FOUND`). None if unavailable.
-fn clamscan_detections(dir: &std::path::Path) -> Option<usize> {
-    let out = aether_common::quiet_command("clamscan")
-        .args(["-r", "--no-summary", "-i"])
-        .arg(dir)
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    Some(
-        text.lines()
-            .filter(|l| l.trim_end().ends_with("FOUND"))
-            .count(),
-    )
-}
-
 /// Run the HTTP/JSON daemon until interrupted.
 fn run_serve(config: Config, args: ServeArgs) -> Result<ExitCode> {
     use aether_daemon::Daemon;
@@ -2628,7 +2938,14 @@ fn run_config_init(config: &Config, output: PathBuf) -> Result<ExitCode> {
 fn run_info(config: Config) -> Result<ExitCode> {
     let scanner = Scanner::new(config).context("failed to initialize scanner")?;
     println!("AetherAV {}", env!("CARGO_PKG_VERSION"));
-    println!("  hash engine:  {} signatures", scanner.signature_count());
+    println!(
+        "  hash engine:  {} named signatures",
+        scanner.signature_count()
+    );
+    println!(
+        "  packed hash:  {} SHA-256 entries",
+        scanner.packed_signature_count()
+    );
     println!(
         "  yara engine:  {}",
         if cfg!(feature = "yara") {
