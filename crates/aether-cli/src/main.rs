@@ -519,9 +519,15 @@ struct MonitorArgs {
     /// Inspect observed processes for fileless executable mappings on Linux.
     #[arg(long)]
     fileless: bool,
+    /// Recheck existing processes for fileless mappings every N seconds (0 disables).
+    #[arg(long, requires = "fileless")]
+    fileless_rescan_secs: Option<u64>,
     /// Emit reviewed-signature candidates when independent engines agree.
     #[arg(long, requires = "scan_executables")]
     propose_signatures: bool,
+    /// Save deduplicated candidates to an existing private review directory.
+    #[arg(long, requires = "propose_signatures")]
+    candidate_dir: Option<PathBuf>,
     /// Ask the configured local Aegis backend to review redacted detector evidence.
     #[arg(long)]
     aegis: bool,
@@ -1289,6 +1295,18 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
         aegis.as_ref().is_none_or(|model| model.is_available()),
         "no usable local Aegis backend"
     );
+    let review_queue = aegis.map(|model| {
+        let (send, requests) = std::sync::mpsc::sync_channel::<String>(1);
+        let (responses, receive) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            while let Ok(summary) = requests.recv() {
+                if let Some(verdict) = model.review_behavior(&summary) {
+                    let _ = responses.try_send(verdict);
+                }
+            }
+        });
+        (send, receive)
+    });
     let scanner = if args.scan_executables || args.fileless {
         config.engines.llm = false;
         config.engines.plugins = false;
@@ -1307,8 +1325,19 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
         monitor.prime();
     }
     let mut pending = VecDeque::new();
+    let mut memory_pending = VecDeque::new();
+    let mut rescan_after = Instant::now();
+    let mut rescan_offset = 0;
+    let rescan_interval = args
+        .fileless_rescan_secs
+        .filter(|&n| n > 0)
+        .map(Duration::from_secs);
     const PENDING_LIMIT: usize = 4096;
     const INSPECTIONS_PER_POLL: usize = 32;
+    const MEMORY_RECHECKS_PER_POLL: usize = 8;
+    if let Some(directory) = &args.candidate_dir {
+        anyhow::ensure!(directory.is_dir(), "candidate directory must already exist");
+    }
     let mut collector = Collector::new(10_000);
     let mut printed = HashSet::new();
     let mut last_review: Option<Instant> = None;
@@ -1343,10 +1372,42 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
                     batch.push(pid);
                 }
             }
-            inspect_new_processes(scanner, &batch, &args)
+            let mut findings = inspect_processes(scanner, &batch, &args, args.scan_executables);
+            if let Some(interval) = rescan_interval {
+                if memory_pending.is_empty() && rescan_after.elapsed() >= interval {
+                    let mut processes = monitor.process_identities();
+                    processes.sort_unstable_by_key(|&(pid, _)| pid);
+                    // Rotate the starting point to avoid starving higher PIDs on large hosts.
+                    if !processes.is_empty() {
+                        let count = processes.len();
+                        processes.rotate_left(rescan_offset % count);
+                        rescan_offset = (rescan_offset + PENDING_LIMIT) % count;
+                    }
+                    if processes.len() > PENDING_LIMIT {
+                        tracing::warn!(
+                            count = processes.len(),
+                            "periodic memory scan capped at 4096 processes"
+                        );
+                    }
+                    memory_pending.extend(processes.into_iter().take(PENDING_LIMIT));
+                    rescan_after = Instant::now();
+                }
+                let mut memory_batch = Vec::new();
+                for _ in 0..MEMORY_RECHECKS_PER_POLL {
+                    let Some((pid, key)) = memory_pending.pop_front() else {
+                        break;
+                    };
+                    if monitor.process_identity(pid) == Some(key) {
+                        memory_batch.push(pid);
+                    }
+                }
+                findings.extend(inspect_processes(scanner, &memory_batch, &args, false));
+            }
+            findings
         } else {
             Vec::new()
         };
+        let mut findings = Vec::new();
         if !events.is_empty() || !direct.is_empty() {
             collector.ingest(events);
             let mut report = collector.report();
@@ -1361,7 +1422,7 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
                     .filter(|v| v.engine == aether_common::EngineKind::Behavioral)
                     .cloned(),
             );
-            let summary = (aegis.is_some() && !report.verdicts.is_empty())
+            let summary = (review_queue.is_some() && !report.verdicts.is_empty())
                 .then(|| report.triage_summary(collector.window()));
             report.verdicts.extend(
                 direct
@@ -1371,7 +1432,6 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
             if printed.len() >= 10_000 {
                 printed.clear();
             }
-            let mut findings = Vec::new();
             for verdict in &report.verdicts {
                 let key = (verdict.signature.clone(), verdict.detail.clone());
                 if printed.insert(key) {
@@ -1381,32 +1441,33 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
             if !findings.is_empty()
                 && last_review.is_none_or(|t| t.elapsed() >= Duration::from_secs(20))
             {
-                if let (Some(model), Some(summary)) = (&aegis, summary) {
+                if let (Some((requests, _)), Some(summary)) = (&review_queue, summary) {
+                    let _ = requests.try_send(summary);
                     last_review = Some(Instant::now());
-                    if let Some(verdict) = model.review_behavior(&summary) {
-                        findings.push(verdict);
-                    }
                 }
             }
-            for verdict in findings {
-                if args.jsonl {
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |d| d.as_micros() as u64);
-                    println!(
-                        "{}",
-                        serde_json::json!({"schema":"aether.security_event.v1",
+        }
+        if let Some((_, responses)) = &review_queue {
+            findings.extend(responses.try_iter());
+        }
+        for verdict in findings {
+            if args.jsonl {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_micros() as u64);
+                println!(
+                    "{}",
+                    serde_json::json!({"schema":"aether.security_event.v1",
                         "event_time_us":timestamp,"host":args.host,"rule_id":verdict.signature,
                         "severity":verdict.level.to_string().to_ascii_lowercase(),"verdict":verdict})
-                    );
-                } else {
-                    println!(
-                        "{:<11} [{}] {}",
-                        verdict.level,
-                        verdict.signature,
-                        verdict.detail.as_deref().unwrap_or("")
-                    );
-                }
+                );
+            } else {
+                println!(
+                    "{:<11} [{}] {}",
+                    verdict.level,
+                    verdict.signature,
+                    verdict.detail.as_deref().unwrap_or("")
+                );
             }
         }
         tick += 1;
@@ -1417,19 +1478,27 @@ fn run_monitor(mut config: Config, args: MonitorArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn inspect_new_processes(
+fn inspect_processes(
     scanner: &Scanner,
     pids: &[u32],
     args: &MonitorArgs,
+    scan_executable: bool,
 ) -> Vec<aether_common::Verdict> {
     use aether_common::{EngineKind, Verdict};
     let mut output = Vec::new();
     for &child_pid in pids {
         let executable = PathBuf::from(format!("/proc/{child_pid}/exe"));
-        if args.scan_executables {
+        if scan_executable {
             match scanner.scan_file(&executable) {
                 Ok(report) => {
                     if args.propose_signatures && defense::eligible_candidate(&report) {
+                        if let Some(directory) = &args.candidate_dir {
+                            if let Err(error) =
+                                defense::record_candidate(directory, &args.host, &report)
+                            {
+                                tracing::warn!(%error, "could not save candidate");
+                            }
+                        }
                         output.push(
                             Verdict::suspicious(
                                 EngineKind::Heuristic,

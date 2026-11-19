@@ -126,6 +126,18 @@ impl ProcMonitor {
         None
     }
 
+    /// Snapshot the identities from the latest poll for bounded periodic inspection.
+    pub fn process_identities(&self) -> Vec<(u32, (u64, u64, u64))> {
+        #[cfg(target_os = "linux")]
+        return self
+            .seen
+            .iter()
+            .map(|(&pid, &identity)| (pid, identity))
+            .collect();
+        #[cfg(not(target_os = "linux"))]
+        Vec::new()
+    }
+
     /// Mark the currently-running processes as already-seen, so the next
     /// `poll` reports only *new* spawns rather than the whole process table.
     pub fn prime(&mut self) {

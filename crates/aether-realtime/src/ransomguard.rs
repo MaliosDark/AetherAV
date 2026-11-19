@@ -7,6 +7,7 @@
 //! Approved rollback uses the available snapshot once after detection.
 
 use crate::FileWatcher;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -44,10 +45,16 @@ pub struct RansomGuard {
     dir: PathBuf,
     vault: PathBuf,
     canaries: Vec<PathBuf>,
-    snapshot: Vec<std::ffi::OsString>,
+    snapshot: Vec<SnapshotFile>,
     /// Mass-modification trigger: this many files changed within the window.
     burst: usize,
     window: Duration,
+}
+
+struct SnapshotFile {
+    name: std::ffi::OsString,
+    digest: [u8; 32],
+    permissions: fs::Permissions,
 }
 
 const CANARY_BODY: &[u8] =
@@ -59,10 +66,28 @@ impl RansomGuard {
     /// existing snapshot directory or overwriting existing canaries.
     pub fn arm(dir: impl AsRef<Path>, vault: impl AsRef<Path>) -> Result<RansomGuard, String> {
         let dir = fs::canonicalize(dir).map_err(|e| e.to_string())?;
-        fs::create_dir_all(vault.as_ref()).map_err(|e| e.to_string())?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(vault.as_ref()).map_err(|e| e.to_string())?;
         let vault = fs::canonicalize(vault).map_err(|e| e.to_string())?;
         if dir.starts_with(&vault) {
             return Err("snapshot vault cannot contain the protected directory".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&vault)
+                .map_err(|e| e.to_string())?
+                .permissions()
+                .mode();
+            if mode & 0o077 != 0 {
+                return Err("snapshot vault requires private permissions (0700)".into());
+            }
         }
         if fs::read_dir(&vault)
             .map_err(|e| e.to_string())?
@@ -90,8 +115,27 @@ impl RansomGuard {
             let entry = entry.map_err(|e| e.to_string())?;
             let meta = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
             if meta.is_file() && meta.len() <= MAX_SNAPSHOT_FILE {
-                fs::copy(entry.path(), vault.join(entry.file_name())).map_err(|e| e.to_string())?;
-                snapshot.push(entry.file_name());
+                let original =
+                    read_bounded(&entry.path(), MAX_SNAPSHOT_FILE).map_err(|e| e.to_string())?;
+                let mut staged =
+                    tempfile::NamedTempFile::new_in(&vault).map_err(|e| e.to_string())?;
+                staged.write_all(&original).map_err(|e| e.to_string())?;
+                staged.as_file().sync_all().map_err(|e| e.to_string())?;
+                let name = entry.file_name();
+                staged
+                    .persist_noclobber(vault.join(&name))
+                    .map_err(|e| e.to_string())?;
+                let permissions = meta.permissions();
+                #[cfg(unix)]
+                let permissions = {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::Permissions::from_mode(permissions.mode() & 0o777)
+                };
+                snapshot.push(SnapshotFile {
+                    name,
+                    digest: Sha256::digest(&original).into(),
+                    permissions,
+                });
             }
         }
         for path in &canaries {
@@ -129,9 +173,9 @@ impl RansomGuard {
     pub fn restore(&self) -> usize {
         self.snapshot
             .iter()
-            .filter(|name| {
-                let source = self.vault.join(name);
-                let target = self.dir.join(name);
+            .filter(|item| {
+                let source = self.vault.join(&item.name);
+                let target = self.dir.join(&item.name);
                 let Ok(meta) = fs::symlink_metadata(&source) else {
                     return false;
                 };
@@ -141,6 +185,10 @@ impl RansomGuard {
                 let Ok(original) = read_bounded(&source, MAX_SNAPSHOT_FILE) else {
                     return false;
                 };
+                if <[u8; 32]>::from(Sha256::digest(&original)) != item.digest {
+                    tracing::warn!(path=%source.display(), "snapshot integrity mismatch");
+                    return false;
+                }
                 match fs::symlink_metadata(&target) {
                     Ok(meta) if !meta.is_file() => return false,
                     Ok(_)
@@ -156,7 +204,7 @@ impl RansomGuard {
                 let result = (|| -> std::io::Result<()> {
                     let mut tmp = tempfile::NamedTempFile::new_in(&self.dir)?;
                     tmp.write_all(&original)?;
-                    tmp.as_file().set_permissions(meta.permissions())?;
+                    tmp.as_file().set_permissions(item.permissions.clone())?;
                     tmp.as_file().sync_all()?;
                     tmp.persist(&target)?;
                     Ok(())
@@ -240,7 +288,20 @@ impl RansomGuard {
 
 fn read_bounded(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    fs::File::open(path)?.take(max + 1).read_to_end(&mut buf)?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other(
+            "snapshot source is not a regular file",
+        ));
+    }
+    file.take(max + 1).read_to_end(&mut buf)?;
     if buf.len() as u64 > max {
         return Err(std::io::Error::other("snapshot sample exceeds file limit"));
     }
@@ -250,6 +311,21 @@ fn read_bounded(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn altered_vault_contents_are_not_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let protected = dir.path().join("protected");
+        let vault = dir.path().join("vault");
+        fs::create_dir(&protected).unwrap();
+        let target = protected.join("doc.txt");
+        fs::write(&target, b"original").unwrap();
+        let guard = RansomGuard::arm(&protected, &vault).unwrap();
+        fs::write(vault.join("doc.txt"), b"tampered backup").unwrap();
+        fs::write(&target, b"changed document").unwrap();
+        assert_eq!(guard.restore(), 0);
+        assert_eq!(fs::read(target).unwrap(), b"changed document");
+    }
 
     #[test]
     fn rollback_does_not_overwrite_symlink_targets() {

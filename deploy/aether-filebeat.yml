@@ -1,0 +1,10 @@
+# Merge into an existing Filebeat configuration with authenticated output.
+filebeat.inputs:
+  - type: filestream
+    id: aether-security-json
+    paths:
+      - /var/log/aether/security.ndjson
+    parsers:
+      - ndjson:
+          target: aether
+          add_error_key: true

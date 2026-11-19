@@ -14,13 +14,17 @@ initial process snapshot. The monitor drains up to 32 inspections per poll
 from a 4,096-entry queue, discards stale identities and logs overflow. It can
 miss very short-lived or inaccessible processes. Executables are read via `/proc/PID/exe`. Fileless triage checks
 executable anonymous regions, writable/executable mappings, memory-backed
-images and mappings whose backing file was deleted. Content reads are bounded
+images and mappings whose backing file was deleted. Add
+`--fileless-rescan-secs 60` to revisit already-running processes and catch
+mappings created after startup. Each interval queues up to 4,096 process
+identities, with eight rechecks per poll in addition to new-process checks. Content reads are bounded
 and depend on OS permissions. Mapping findings can also arise from legitimate
 JITs and software upgrades.
 
 The host baseline learns from operator-supplied known-good traces. Aegis
 receives redacted counts and detector IDs, and its output remains a triage
-signal. A model prediction cannot block a process or change the baseline. For
+signal. The monitor submits reviews to a bounded background worker so a
+slow model does not stall process inspection. A model prediction cannot block a process or change the baseline. For
 pre-execution file blocking on supported Linux mounts, use the existing
 privileged `aether protect` fanotify path with reviewed scope. A process poller
 detects activity after it starts.
@@ -39,7 +43,12 @@ aether learn-attack quarantined-file --family Reviewed.Family \
 
 The second command writes a new approval record after re-running eligibility
 checks. The operator can merge reviewed records into their managed signature
-collection. Live activity and unconfirmed incidents do not train the benign
+collection. To persist an automatically proposed candidate for review, add
+`--candidate-dir /var/lib/aether/review` to the monitor with
+`--scan-executables --propose-signatures`. Create the directory for the
+monitor user with mode 0700. Each digest yields at most one metadata file.
+This queue has no authority to change signatures or model weights. Live
+activity and unconfirmed incidents do not train the benign
 baseline or publish signatures.
 
 ## Large SHA-256 catalogs
@@ -80,8 +89,12 @@ aether ssh-events server-01.ndjson server-02.ndjson server-03.ndjson \
 
 The command parses `journalctl -o json` exports, deduplicates journal cursors
 and emits JSONL findings for password spraying, distributed host targeting
-from one IP, and login success after related failures. It accepts IPv4 and
-IPv6. Correlation is batch-scoped and limited to 250,000 SSH events, one
+from one IP, and login success after six failures for the same account, host
+and source. It also flags eight failures against a single host/account from
+at least four distinct source IPs in five minutes. It accepts IPv4 and IPv6.
+Use `--emit-events` to include normalized authentication events with stable
+`event_id`, `auth_method` and `outcome`, without the raw SSH message.
+Deduplicate overlapping batches by `event_id` when ingesting them. Correlation is batch-scoped and limited to 250,000 SSH events, one
 million lines and 512 MiB per invocation. Forward findings to an existing
 Wazuh or Elastic deployment and use transport authentication, retention and
 dashboards provided by that deployment. The JSONL events share
@@ -91,7 +104,7 @@ dashboards provided by that deployment. The JSONL events share
 The compiled matcher supports a subset of Sigma in JSON syntax for
 `product: linux` and `service: sshd`. It accepts one named selection with
 AND across fields and OR within a value list. Fields are `Message`,
-`TargetUser`, `SourceIp`, `Hostname` and `Outcome` (`success` or `failure`).
+`TargetUser`, `SourceIp`, `Hostname`, `AuthMethod` and `Outcome` (`success` or `failure`).
 Operators are equality, `contains`, `startswith` and `endswith`. Unsupported
 conditions or modifiers produce an error. See the
 [Sigma rule specification](https://sigmahq.io/sigma-specification/specification/sigma-rules-specification.html).
@@ -108,13 +121,16 @@ hosts.
 ```sh
 aether host-audit --sshd sshd-effective.txt --ufw ufw.txt \
   --admin-groups jadmin-groups.txt --cargo-audit antivirus-audit.json \
-  --pending-packages packages.txt
+  --pending-packages packages.txt --sudo-listing sudo-effective.txt
 ```
 
 The command emits recommendations in JSONL and returns code 1 for findings.
 It reviews root login, password and keyboard-interactive settings,
 authentication attempts, broad SSH rules, sensitive group membership and
-supplied advisory or update records. Treat package updates as pending
+supplied advisory or update records. It also checks empty SSH passwords,
+remote forwarding bind policy, broad incoming defaults and unrestricted
+passwordless sudo in a listing exported with `LC_ALL=C sudo -l -U jmadmin`
+(substitute the actual account). Treat package updates as pending
 maintenance and confirm applicable security advisories for the distribution.
 Apply SSH and firewall changes only through the authorized host management
 workflow after checking a separate recovery path.
@@ -129,7 +145,9 @@ aether ransomguard documents --vault /protected-backups/run-02 --restore
 Use one empty vault per snapshot. The first mode detects a canary or mass-write
 signal and reports it. The second mode permits one restore of changed or
 missing direct regular files up to 25 MiB that were captured by the snapshot.
-It skips symlink targets. Run each example on a separate clean test directory
+It skips symlink targets and refuses altered snapshot content using SHA-256.
+Use a private vault with mode 0700 on Unix. On Linux, snapshot reads also
+reject final symlinks and use nonblocking opens for raced special files. Run each example on a separate clean test directory
 or reuse one command for the chosen mode. Restore coverage is limited to the
 snapshot, and an active encryptor can continue writing after rollback.
 Keep separate access-restricted backups and verify recovery. See the
@@ -221,3 +239,61 @@ skipped by the size limit. It reports 95% Wilson intervals. The gate requires
 a recall lower bound of at least 98.99% and a false-positive upper bound of
 at most 0.29%. Status 3 means a complete evaluation missed the target.
 A smoke test using only EICAR cannot qualify as a release evaluation.
+
+## Curate corroborated signature sources
+
+Supply one tab-separated UTF-8 file per independently reviewed provider.
+Each line is `SHA256<TAB>malicious`, `SHA256<TAB>benign` or
+`SHA256<TAB>holdout`. Verify the provider's provenance and the terms for the
+intended deployment before treating a source as approved. Exclude mirrors
+of the same upstream provider from independent corroboration.
+
+```sh
+python tools/curate_sha256_catalog.py --out approved.sha256 --min-entries 23000000 \
+  "source-a:$FIRST_SHA256=$FIRST_TSV" "source-b:$SECOND_SHA256=$SECOND_TSV"
+aether pack-signatures approved.sha256 --output approved.pack --min-entries 23000000
+```
+
+Each source can vote at most once per digest. Any benign or holdout
+classification vetoes publication. Both steps refuse a below-target
+catalog. The build accepts independently supplied research metadata but
+ships no new blocking database or model weights.
+
+## Connect a central SIEM
+
+Keep the forwarding service authenticated and transport-protected. Write
+AetherAV JSON Lines to a log owned by the agent account. For SSH, export
+`journalctl -o json` from each authenticated host using stable host names
+and collect the exports centrally. Feed overlapping batches to
+`ssh-events --emit-events` and append normalized output to
+`/var/log/aether/security.ndjson` for the existing forwarder. Configure log
+rotation, agent health monitoring and retention on the central platform.
+SSH source IPs and account names are sensitive operational data.
+
+For Wazuh, add this fragment to the collector agent's `ossec.conf` and
+import the [sample rules](../deploy/wazuh-aether-rules.xml) on the manager
+after checking local rule IDs. Use `wazuh-logtest` with a sample event before
+enabling alerts on production collectors.
+
+```xml
+<localfile>
+  <location>/var/log/aether/security.ndjson</location>
+  <log_format>json</log_format>
+</localfile>
+```
+
+For Elastic, merge the [Filebeat input example](../deploy/aether-filebeat.yml)
+with your authenticated output configuration and use `aether.event_id` in
+deduplication. Test the configuration and ingestion on a staging collector.
+
+## Implementation and deployment status
+
+| Capability | Available in this branch | Remaining for deployment or validation |
+| --- | --- | --- |
+| Live executables and fileless detection | Linux process observation, executable reads, periodic memory checks and optional fanotify protection on configured scope | Short-lived and inaccessible processes can be missed. Validate coverage and overhead on the target kernel and service account |
+| Behavioral AI | Detector correlation, known-good baseline and asynchronous local Aegis triage | Representative held-out telemetry, evaluation of the shipped model and an approved replacement |
+| Incident learning | Automatic deduplicated review records, with explicit approval and a fresh scan before writing a signature | Reviewed incident labels and a controlled retraining and promotion pipeline |
+| Ransomware | Canary and mass-change alerts, optional restoration from a checked snapshot | Restore drills and isolated recovery tests. Prevention cannot be guaranteed |
+| SSH, Sigma and SIEM | Bounded multi-host correlation, four Linux SSH rules, normalized JSON and Wazuh/Filebeat examples | Central authenticated collection, deployment of rules, retention, dashboards and operational validation |
+| Host vulnerabilities | Read-only review of supplied OpenSSH, UFW, account, OS package and RustSec reports | Environment-specific verification and approved remediation with recovery access |
+| Signatures and zero-day assessment | Multi-source exact-hash staging, quality gates and a tested 23-million-record synthetic index | Approved provider data for 23 million unique real signatures. Validate behavior against previously unseen samples using the release benchmark |

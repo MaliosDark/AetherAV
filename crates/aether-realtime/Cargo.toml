@@ -13,6 +13,7 @@ notify = { workspace = true }
 dns-lookup = { workspace = true }
 tracing = { workspace = true }
 tempfile = { workspace = true }
+sha2 = { workspace = true }
 # Live DNS-query sniffing needs libpcap + capture privileges; off by default.
 pcap = { version = "2", optional = true }
 

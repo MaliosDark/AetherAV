@@ -20,6 +20,9 @@ pub struct SshEventsArgs {
     /// Optional Linux sshd rule using the documented JSON-formatted Sigma subset.
     #[arg(long)]
     sigma: Vec<PathBuf>,
+    /// Also emit normalized authentication events for an external SIEM.
+    #[arg(long)]
+    emit_events: bool,
 }
 
 #[derive(Debug)]
@@ -29,6 +32,8 @@ struct Event {
     user: String,
     ip: IpAddr,
     success: bool,
+    method: String,
+    cursor: Option<String>,
     message: String,
 }
 
@@ -45,7 +50,14 @@ fn parse(value: &Value) -> Option<Event> {
     if !matches!(status, "Accepted" | "Failed") {
         return None;
     }
-    let (_, tail) = rest.split_once(" for ")?;
+    let (method, tail) = rest.split_once(" for ")?;
+    if method.is_empty()
+        || !method
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_/".contains(&c))
+    {
+        return None;
+    }
     let (user, source) = tail.split_once(" from ")?;
     let user = user.strip_prefix("invalid user ").unwrap_or(user);
     let source = source.split_whitespace().next()?.parse().ok()?;
@@ -69,6 +81,11 @@ fn parse(value: &Value) -> Option<Event> {
         user: user.to_owned(),
         ip: source,
         success: status == "Accepted",
+        method: method.to_owned(),
+        cursor: value
+            .get("__CURSOR")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         message: message.to_owned(),
     })
 }
@@ -120,24 +137,27 @@ fn correlate(events: &[Event]) -> Vec<Value> {
         let window = windows.entry(event.ip).or_default();
         window.expire(event.ts);
         if event.success {
-            if window.items.len() >= 6
-                && window
-                    .accounts
-                    .contains_key(&(event.host.as_str(), event.user.as_str()))
-                && reported.insert((event.ip, "ssh.login_after_failures"))
-            {
-                alerts.push(alert(
-                    event,
+            let failures = window
+                .accounts
+                .get(&(event.host.as_str(), event.user.as_str()))
+                .copied()
+                .unwrap_or(0);
+            if failures >= 6
+                && reported.insert((
+                    event.ip,
                     "ssh.login_after_failures",
-                    "high",
-                    window.items.len(),
-                ));
+                    event.host.as_str(),
+                    event.user.as_str(),
+                ))
+            {
+                alerts.push(alert(event, "ssh.login_after_failures", "high", failures));
             }
             continue;
         }
         window.push(event);
         if window.items.len() >= 6 {
-            if window.users.len() >= 3 && reported.insert((event.ip, "ssh.password_spray")) {
+            if window.users.len() >= 3 && reported.insert((event.ip, "ssh.password_spray", "", ""))
+            {
                 alerts.push(alert(
                     event,
                     "ssh.password_spray",
@@ -145,7 +165,9 @@ fn correlate(events: &[Event]) -> Vec<Value> {
                     window.items.len(),
                 ));
             }
-            if window.hosts.len() >= 3 && reported.insert((event.ip, "ssh.multi_host_source")) {
+            if window.hosts.len() >= 3
+                && reported.insert((event.ip, "ssh.multi_host_source", "", ""))
+            {
                 alerts.push(alert(
                     event,
                     "ssh.multi_host_source",
@@ -155,13 +177,66 @@ fn correlate(events: &[Event]) -> Vec<Value> {
             }
         }
     }
+    alerts.extend(distributed_account_alerts(events));
     alerts
+}
+
+#[derive(Default)]
+struct AccountWindow<'a> {
+    failures: VecDeque<&'a Event>,
+    sources: HashMap<IpAddr, usize>,
+    reported: bool,
+}
+
+fn distributed_account_alerts(events: &[Event]) -> Vec<Value> {
+    let mut windows = HashMap::<(&str, &str), AccountWindow<'_>>::new();
+    let mut findings = Vec::new();
+    for event in events.iter().filter(|event| !event.success) {
+        let window = windows.entry((&event.host, &event.user)).or_default();
+        while window
+            .failures
+            .front()
+            .is_some_and(|old| event.ts.saturating_sub(old.ts) > WINDOW_US)
+        {
+            let old = window.failures.pop_front().expect("expired event exists");
+            remove_count(&mut window.sources, old.ip);
+        }
+        if window.failures.len() < 8 || window.sources.len() < 4 {
+            window.reported = false;
+        }
+        window.failures.push_back(event);
+        *window.sources.entry(event.ip).or_default() += 1;
+        if !window.reported && window.failures.len() >= 8 && window.sources.len() >= 4 {
+            let mut finding = alert(
+                event,
+                "ssh.distributed_account_failures",
+                "high",
+                window.failures.len(),
+            );
+            finding["distinct_source_ips"] = json!(window.sources.len());
+            findings.push(finding);
+            window.reported = true;
+        }
+    }
+    findings
+}
+
+fn event_id(event: &Event, rule_id: &str) -> String {
+    let key = json!([
+        event.host,
+        event.ts,
+        event.cursor.as_deref(),
+        event.message,
+        rule_id
+    ]);
+    aether_signatures::hash_bytes(key.to_string().as_bytes()).sha256
 }
 
 fn alert(event: &Event, id: &str, severity: &str, failures: usize) -> Value {
     json!({"schema":"aether.security_event.v1","event_time_us":event.ts,"host":event.host,
         "source_ip":event.ip.to_string(),"target_user":event.user,"rule_id":id,
-        "severity":severity,"failures_in_window":failures})
+        "severity":severity,"failures_in_window":failures,"event_id":event_id(event,id),
+        "auth_method":event.method,"outcome":if event.success {"success"} else {"failure"}})
 }
 
 enum Operator {
@@ -230,7 +305,7 @@ impl Sigma {
             ensure!(
                 matches!(
                     field,
-                    "Message" | "TargetUser" | "SourceIp" | "Hostname" | "Outcome"
+                    "Message" | "TargetUser" | "SourceIp" | "Hostname" | "Outcome" | "AuthMethod"
                 ),
                 "unsupported Sigma field"
             );
@@ -279,6 +354,7 @@ impl Sigma {
                 "Message" => &event.message,
                 "TargetUser" => &event.user,
                 "SourceIp" => &ip,
+                "AuthMethod" => &event.method,
                 "Hostname" => &event.host,
                 "Outcome" if event.success => "success",
                 "Outcome" => "failure",
@@ -353,6 +429,9 @@ pub fn run(args: SshEventsArgs) -> Result<ExitCode> {
         println!("{finding}");
     }
     for event in &events {
+        if args.emit_events {
+            println!("{}", alert(event, "ssh.authentication", "informational", 0));
+        }
         for rule in &rules {
             if rule.matches(event) {
                 println!("{}", alert(event, &rule.id, &rule.severity, 0));
@@ -374,16 +453,39 @@ mod tests {
     #[test]
     fn correlates_multi_host_spray_and_login() {
         let mut events = Vec::new();
-        for i in 0..7 {
-            let state = if i == 6 { "Accepted" } else { "Failed" };
-            let value = json!({"_COMM":"sshd-session","_HOSTNAME":format!("h{}",i%3),
+        for i in 0..10 {
+            let state = if i == 9 { "Accepted" } else { "Failed" };
+            let account = if i < 3 { i } else { 0 };
+            let value = json!({"_COMM":"sshd-session","_HOSTNAME":format!("h{account}"),
                 "__REALTIME_TIMESTAMP":(i*1_000_000).to_string(),
-                "MESSAGE":format!("{state} password for user{} from 2001:db8::25 port 2222 ssh2",i%3)});
+                "MESSAGE":format!("{state} password for user{account} from 2001:db8::25 port 2222 ssh2")});
             events.push(parse(&value).unwrap());
         }
         assert_eq!(correlate(&events).len(), 3);
-        events[6].ts = WINDOW_US + 6_000_000;
+        events[9].user = "user1".into();
+        events[9].host = "h1".into();
         assert_eq!(correlate(&events).len(), 2);
+        events[9].user = "user0".into();
+        events[9].host = "h0".into();
+        events[9].ts = WINDOW_US + 9_000_000;
+        assert_eq!(correlate(&events).len(), 2);
+    }
+
+    #[test]
+    fn detects_distributed_failures_only_within_one_account_window() {
+        let events: Vec<_> = (0..12)
+            .map(|i| {
+                parse(&json!({"_COMM":"sshd","_HOSTNAME":"host",
+                "__REALTIME_TIMESTAMP": i,
+                "MESSAGE":format!("Failed password for {} from 192.0.2.{} port 5555 ssh2",
+                    if i >= 8 {"other"} else {"account"}, (i % 4)+1)}))
+                .unwrap()
+            })
+            .collect();
+        let matches = distributed_account_alerts(&events);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["distinct_source_ips"], 4);
+        assert_eq!(matches[0]["target_user"], "account");
     }
 
     #[test]

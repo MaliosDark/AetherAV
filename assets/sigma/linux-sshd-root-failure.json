@@ -1,0 +1,11 @@
+{
+  "title": "Failed Linux OpenSSH authentication as root",
+  "id": "9f6300bf-5684-4d81-a5a4-94ea9d91a365",
+  "status": "experimental",
+  "logsource": { "product": "linux", "service": "sshd" },
+  "detection": {
+    "login": { "Outcome": "failure", "TargetUser": "root" },
+    "condition": "login"
+  },
+  "level": "low"
+}

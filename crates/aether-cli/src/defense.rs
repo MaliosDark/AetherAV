@@ -16,6 +16,9 @@ pub struct PackArgs {
     input: PathBuf,
     #[arg(long)]
     output: PathBuf,
+    /// Refuse publication below this count of distinct hashes (for example, 23000000).
+    #[arg(long, default_value_t = 1)]
+    min_entries: u64,
 }
 
 fn output_parent(path: &Path) -> &Path {
@@ -29,6 +32,11 @@ pub fn pack_signatures(args: PackArgs) -> Result<ExitCode> {
     let mut staging = tempfile::NamedTempFile::new_in(output_parent(&args.output))?;
     let count =
         aether_signatures::packed::write_index(input, BufWriter::new(staging.as_file_mut()))?;
+    ensure!(
+        count >= args.min_entries,
+        "catalog contains {count} unique signatures; {} required",
+        args.min_entries
+    );
     staging.as_file().sync_all()?;
     staging.persist_noclobber(&args.output)?;
     println!("{}", json!({"sha256_entries":count,"index":args.output}));
@@ -66,9 +74,40 @@ pub(crate) fn eligible_candidate(report: &ScanReport) -> bool {
             )
         })
         .collect();
-    !report.hashes.sha256.is_empty()
+    report.hashes.sha256.len() == 64
+        && report.hashes.sha256.bytes().all(|b| b.is_ascii_hexdigit())
         && !report.verdicts.iter().any(|v| v.engine == EngineKind::Hash)
         && independent.len() >= 2
+}
+
+pub(crate) fn record_candidate(directory: &Path, host: &str, report: &ScanReport) -> Result<()> {
+    ensure!(
+        eligible_candidate(report),
+        "candidate lacks corroborating evidence"
+    );
+    let destination = directory.join(format!(
+        "{}.json",
+        report.hashes.sha256.to_ascii_lowercase()
+    ));
+    let mut staging = tempfile::NamedTempFile::new_in(directory)?;
+    let engines: HashSet<_> = report
+        .verdicts
+        .iter()
+        .filter(|v| v.level == ThreatLevel::Malicious)
+        .map(|v| v.engine)
+        .collect();
+    serde_json::to_writer(
+        &mut staging,
+        &json!({"schema":"aether.signature_candidate.v1", "host":host,
+               "sha256":report.hashes.sha256, "status":"review_required", "engines":engines}),
+    )?;
+    writeln!(staging)?;
+    staging.as_file().sync_all()?;
+    match staging.persist_noclobber(destination) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn learn_attack(mut config: Config, args: LearnAttackArgs) -> Result<ExitCode> {
@@ -118,6 +157,9 @@ pub struct HostAuditArgs {
     /// Group names exported with id -nG for the administrative account.
     #[arg(long)]
     admin_groups: Option<PathBuf>,
+    /// Account sudo privileges exported with LC_ALL=C sudo -l -U <account>.
+    #[arg(long)]
+    sudo_listing: Option<PathBuf>,
     /// JSON report produced by cargo audit for the antivirus checkout.
     #[arg(long)]
     cargo_audit: Option<PathBuf>,
@@ -168,6 +210,17 @@ pub fn host_audit(args: HostAuditArgs) -> Result<ExitCode> {
     {
         finding("audit.ssh.max_auth_tries", "Review MaxAuthTries and rate limits against the expected administrator login workflow.");
     }
+    if effective.get("permitemptypasswords") == Some(&"yes") {
+        finding("audit.ssh.empty_passwords", "Set PermitEmptyPasswords no in the managed SSH configuration, validate with sshd -t and verify access in a separate session.");
+    }
+    if effective
+        .get("gatewayports")
+        .is_some_and(|&value| value != "no")
+        && effective.get("allowtcpforwarding") != Some(&"no")
+        && effective.get("disableforwarding") != Some(&"yes")
+    {
+        finding("audit.ssh.gateway_ports", "Check whether SSH forwarding must bind outside loopback and review AllowTcpForwarding, GatewayPorts and PermitListen.");
+    }
     if let Some(path) = args.ufw {
         let ufw = bounded_text(&path)?;
         if ufw.lines().any(|l| l.trim() == "Status: inactive") {
@@ -178,8 +231,16 @@ pub fn host_audit(args: HostAuditArgs) -> Result<ExitCode> {
                 "Obtain effective UFW or nftables status before assessing host filtering.",
             );
         }
-        let port = effective.get("port").copied().unwrap_or("22");
-        let tcp = format!("{port}/tcp");
+        if ufw.lines().any(|line| {
+            let line = line.trim().to_ascii_lowercase();
+            line.starts_with("default:") && line.contains("allow (incoming)")
+        }) {
+            finding("audit.firewall.allow_incoming_default", "Review the default incoming rule against the approved service inventory and confirm console recovery before changing it.");
+        }
+        let ports: Vec<_> = ssh
+            .lines()
+            .filter_map(|line| line.strip_prefix("port "))
+            .collect();
         if ufw.lines().any(|line| {
             let line = line.trim();
             let line = if line.starts_with('[') {
@@ -188,11 +249,19 @@ pub fn host_audit(args: HostAuditArgs) -> Result<ExitCode> {
             } else {
                 line
             };
-            line.split_whitespace()
-                .next()
-                .is_some_and(|target| target == tcp || target == port || target == "OpenSSH")
-                && line.contains("ALLOW")
-                && line.contains("Anywhere")
+            let Some((target, source)) = line.split_once("ALLOW") else {
+                return false;
+            };
+            let target = target.split_whitespace().next().unwrap_or("");
+            let port = target.strip_suffix("/tcp").unwrap_or(target);
+            let mut source = source.split_whitespace();
+            let address = match source.next() {
+                Some("IN") => source.next(),
+                Some("OUT") => None,
+                address => address,
+            };
+            (target == "OpenSSH" || ports.contains(&port) || (ports.is_empty() && port == "22"))
+                && address.is_some_and(|source| matches!(source, "Anywhere" | "0.0.0.0/0" | "::/0"))
         }) {
             finding("audit.firewall.public_ssh_rule", "Review the open SSH rule and authorized management sources. Verify an alternate access path before changing the firewall.");
         }
@@ -226,6 +295,20 @@ pub fn host_audit(args: HostAuditArgs) -> Result<ExitCode> {
             finding("audit.account.privileged_group", "Review privileged group membership, sudo scope and a tested recovery login before reducing access.");
         }
     }
+    if let Some(path) = args.sudo_listing {
+        let listing = bounded_text(&path)?;
+        if listing.lines().any(|line| {
+            let Some((run_as, commands)) = line.trim_start().split_once(')') else {
+                return false;
+            };
+            matches!(
+                run_as.trim_end(),
+                "(ALL" | "(ALL : ALL" | "(root" | "(root : root"
+            ) && commands.trim() == "NOPASSWD: ALL"
+        }) {
+            finding("audit.account.passwordless_sudo_all", "Review the account's unrestricted passwordless sudo grant. Validate a least-privilege replacement with visudo -c and test recovery before removing access.");
+        }
+    }
     Ok(ExitCode::from(u8::from(count > 0)))
 }
 
@@ -256,6 +339,18 @@ mod tests {
             1.0,
         ));
         assert!(eligible_candidate(&report));
+        let review_dir = tempfile::tempdir().unwrap();
+        record_candidate(review_dir.path(), "first-host", &report).unwrap();
+        record_candidate(review_dir.path(), "second-host", &report).unwrap();
+        let entries: Vec<_> = std::fs::read_dir(review_dir.path()).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        let entry = entries.into_iter().next().unwrap().unwrap();
+        let document: serde_json::Value =
+            serde_json::from_reader(File::open(entry.path()).unwrap()).unwrap();
+        assert_eq!(document["sha256"], report.hashes.sha256);
+        assert_eq!(document["host"], "first-host");
+        assert_eq!(document["status"], "review_required");
+        assert!(document.get("path").is_none());
         report
             .verdicts
             .push(Verdict::malicious(EngineKind::Hash, "fixture.known", 1.0));
