@@ -17,6 +17,11 @@ parser.add_argument("--base", type=Path, required=True, help="Local Aegis GGUF")
 parser.add_argument("--train", type=Path, required=True)
 parser.add_argument("--eval", type=Path, required=True)
 parser.add_argument("--out", type=Path, required=True, help="New directory for a candidate checkpoint")
+parser.add_argument(
+    "--incident-holdout",
+    action="store_true",
+    help="Require reviewed, disjoint incident groups and improvement before exporting",
+)
 args = parser.parse_args()
 if args.out.exists():
     parser.error("--out must be a new candidate directory")
@@ -41,10 +46,16 @@ model.config.pad_token_id = model.generation_config.pad_token_id = tok.pad_token
 
 def load_observations(path):
     observations = {}
+    incidents = set()
     with path.open(encoding="utf-8") as data:
         for line in data:
             row = json.loads(line)
             if row["instruction"].startswith("Review these local behavioral observations"):
+                if args.incident_holdout:
+                    incident = row.get("incident_id")
+                    if row.get("reviewed") is not True or not isinstance(incident, str) or not incident.strip():
+                        raise ValueError("incident evaluation requires reviewed rows with incident_id")
+                    incidents.add(incident)
                 text = row["instruction"] + "\n" + row["input"] + "\n"
                 reply = row["output"]
                 if reply.split(" |", 1)[0] not in ("Benign", "Suspicious"):
@@ -52,7 +63,7 @@ def load_observations(path):
                 if text in observations and observations[text] != reply:
                     raise ValueError("one observation has conflicting expected replies")
                 observations[text] = reply
-    return observations
+    return observations, incidents
 
 
 def prepared(prompt, response):
@@ -90,7 +101,10 @@ def evaluate(examples):
     }
 
 
-train, test = load_observations(args.train), load_observations(args.eval)
+train, train_incidents = load_observations(args.train)
+test, test_incidents = load_observations(args.eval)
+if train_incidents & test_incidents:
+    raise ValueError("incident groups overlap training and evaluation")
 if train.keys() & test.keys():
     raise ValueError("train and evaluation observations overlap")
 if len({reply.split(" |", 1)[0] for reply in test.values()}) != 2:
@@ -105,7 +119,8 @@ for label in ("Benign", "Suspicious"):
     examples.extend(labelled[:128])
 rng.shuffle(examples)
 test = list(test.items())
-print(json.dumps({"baseline": evaluate(test), "train_rows": len(examples)}), flush=True)
+baseline = evaluate(test)
+print(json.dumps({"baseline": baseline, "train_rows": len(examples)}), flush=True)
 model.requires_grad_(False)
 for layer in model.model.layers[-2:]:
     layer.requires_grad_(True)
@@ -123,10 +138,15 @@ for index, (prompt, reply) in enumerate(examples, 1):
         optimizer.zero_grad(set_to_none=True)
     if index % 64 == 0:
         print(f"examples={index} last_loss={loss.item():.4f}", flush=True)
+candidate = evaluate(test)
+gate_passed = candidate["fp"] <= baseline["fp"] and candidate["fn"] < baseline["fn"]
 print(json.dumps({
-    "candidate": evaluate(test),
+    "candidate": candidate,
     "trainable_params": sum(p.numel() for p in params),
+    "incident_gate": ("pass" if gate_passed else "fail") if args.incident_holdout else "disabled",
 }), flush=True)
+if args.incident_holdout and not gate_passed:
+    parser.exit(3, "candidate must reduce missed incidents without increasing false positives\n")
 args.out.mkdir()
 # The experimental artifact contains only the trained layers. Loading it
 # requires the same base checkpoint. This avoids writing the frozen weights.

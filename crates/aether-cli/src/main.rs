@@ -261,6 +261,9 @@ struct ProtectArgs {
     /// Path(s) whose filesystem(s) to protect - every open/exec on them is checked.
     #[arg(required = true)]
     paths: Vec<PathBuf>,
+    /// Inspect execution only and require a dedicated filesystem mount point.
+    #[arg(long)]
+    exec_only: bool,
     /// Max bytes read from each file for the verdict.
     #[arg(long, default_value_t = 8 * 1024 * 1024)]
     max_read: usize,
@@ -2268,6 +2271,8 @@ fn run_protect(mut config: Config, args: ProtectArgs) -> Result<ExitCode> {
     // heuristics + ML), never the LLM or full sandbox, per open.
     config.engines.llm = false;
     config.engines.sandbox = false;
+    config.engines.plugins = false;
+    config.engines.reputation = false;
     let scanner = Scanner::new(config).context("failed to initialize scanner")?;
     let mut vault = match &args.quarantine {
         Some(dir) => {
@@ -2281,10 +2286,20 @@ fn run_protect(mut config: Config, args: ProtectArgs) -> Result<ExitCode> {
         Ok(_) => tracing::info!("self-protection enabled (non-dumpable, OOM-protected)"),
         Err(e) => tracing::warn!(error = %e, "self-protection unavailable"),
     }
-    let guard = OnAccessGuard::new(&args.paths).map_err(|e| anyhow::anyhow!(e))?;
+    let guard = if args.exec_only {
+        OnAccessGuard::executable_mounts(&args.paths)
+    } else {
+        OnAccessGuard::new(&args.paths)
+    }
+    .map_err(|e| anyhow::anyhow!(e))?;
     println!(
-        "kernel on-access protection ACTIVE on {:?} - every open/exec is checked. Ctrl-C to stop.",
-        args.paths
+        "kernel on-access protection ACTIVE on {:?} ({})",
+        args.paths,
+        if args.exec_only {
+            "execution"
+        } else {
+            "open and execution"
+        }
     );
     let mut blocked = 0u64;
     guard

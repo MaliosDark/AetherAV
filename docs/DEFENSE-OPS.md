@@ -297,3 +297,55 @@ deduplication. Test the configuration and ingestion on a staging collector.
 | SSH, Sigma and SIEM | Bounded multi-host correlation, four Linux SSH rules, normalized JSON and Wazuh/Filebeat examples | Central authenticated collection, deployment of rules, retention, dashboards and operational validation |
 | Host vulnerabilities | Read-only review of supplied OpenSSH, UFW, account, OS package and RustSec reports | Environment-specific verification and approved remediation with recovery access |
 | Signatures and zero-day assessment | Multi-source exact-hash staging, quality gates and a tested 23-million-record synthetic index | Approved provider data for 23 million unique real signatures. Validate behavior against previously unseen samples using the release benchmark |
+
+## Local SIEM journal
+
+Run the journal on a private collector directory owned by its dedicated
+account. Feed it complete batches from authenticated hosts only. The
+SQLite database keeps normalized events, rejects malformed batches
+atomically and de-duplicates by event ID. For records without an ID,
+it hashes the canonical JSON. Query and summary commands can run alongside
+batch collection. The retention period is measured from ingestion time.
+
+```sh
+python tools/aether_siem.py --db security.sqlite ingest < security.ndjson
+python tools/aether_siem.py --db security.sqlite summary
+python tools/aether_siem.py --db security.sqlite query --host server-01 --severity high
+python tools/aether_siem.py --db security.sqlite prune --days 90
+```
+
+Schedule ingestion and retention using the collector's scheduler.
+Use the Wazuh and Filebeat examples for centralized transport, alerting,
+operational retention and dashboards.
+
+## Commission execution-only protection and isolated recovery
+
+In a test VM, attach a dedicated filesystem containing test executables
+and keep the AetherAV binary, configuration, signatures and logs outside
+that mount. Run `aether -c qa.toml protect --exec-only /mnt/aether-qa`
+with the capability required by fanotify. The execution-only profile
+rejects the root mount and paths on the same device as their parent.
+Check that a known-good fixture runs and a harmless fixture with a test
+signature is denied before execution. Then stop the guard. General
+`protect` still watches opens and executions on the containing mount.
+
+For a recovery drill, use a separate private vault filesystem in the
+isolated VM. Record pre-change SHA-256 digests, induce benign modifications
+during representative I/O, trigger a canary alert and verify every expected
+digest after restoration. Record a separate test for external-backup
+recovery. An isolated snapshot drill and an external-backup restore
+exercise different failure modes.
+
+For model release, use analyst-reviewed incident traces with time and
+host separation between training and holdout. Static ELF classification
+datasets can validate a static detector. The behavioral Aegis needs
+behavioral examples with verified labels. Record the candidate model
+digest and compare it with the shipped model on the held-out traces
+before promoting any candidate.
+
+The `train_aegis_triage.py --incident-holdout` profile accepts reviewed
+rows with nonempty `incident_id` values and rejects groups crossing the
+split. It suppresses export unless the candidate has fewer misses and no
+increase in false positives on the same observations. This comparison is
+an export check. Production release still requires a representative
+independent evaluation of the deployed model and engine.

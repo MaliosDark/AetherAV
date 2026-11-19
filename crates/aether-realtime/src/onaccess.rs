@@ -56,6 +56,34 @@ impl OnAccessGuard {
     /// Initialise fanotify and mark the mount(s) containing `paths` for
     /// open/exec permission events.
     pub fn new(paths: &[PathBuf]) -> Result<OnAccessGuard, String> {
+        Self::register(paths, FAN_OPEN_PERM | FAN_OPEN_EXEC_PERM)
+    }
+
+    /// Deny unexpected mount-wide scope in the execution-only profile.
+    pub fn executable_mounts(paths: &[PathBuf]) -> Result<Self, String> {
+        let mounts = paths
+            .iter()
+            .map(|path| {
+                use std::os::unix::fs::MetadataExt;
+                let mount = path.canonicalize().map_err(|e| e.to_string())?;
+                let meta = mount.metadata().map_err(|e| e.to_string())?;
+                let parent = mount
+                    .parent()
+                    .ok_or("the root mount is not an isolated execution scope")?;
+                let parent = parent.metadata().map_err(|e| e.to_string())?;
+                if !meta.is_dir() || meta.dev() == parent.dev() {
+                    return Err(format!(
+                        "{} must be a dedicated filesystem mount point",
+                        mount.display()
+                    ));
+                }
+                Ok(mount)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Self::register(&mounts, FAN_OPEN_EXEC_PERM)
+    }
+
+    fn register(paths: &[PathBuf], mask: u64) -> Result<Self, String> {
         let fd = unsafe {
             libc::syscall(
                 libc::SYS_fanotify_init,
@@ -79,7 +107,7 @@ impl OnAccessGuard {
                     libc::SYS_fanotify_mark,
                     fd,
                     (FAN_MARK_ADD | FAN_MARK_MOUNT) as libc::c_uint,
-                    FAN_OPEN_PERM | FAN_OPEN_EXEC_PERM,
+                    mask,
                     libc::AT_FDCWD,
                     c.as_ptr(),
                 )
